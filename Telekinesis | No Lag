@@ -111,7 +111,7 @@ if OldGui then
 end
 
 local Gui = Instance.new("ScreenGui")
-Gui.Name = "Telekinesis | Made by hzReyzn"
+Gui.Name = "Telekinesis"
 Gui.ResetOnSpawn = false
 Gui.Parent = PlayerGui
 
