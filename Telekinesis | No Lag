@@ -1,0 +1,1394 @@
+--========================================================
+-- TELEKINESIS - STRONG + RESPAWN + COLLISION
+-- + UI THEMES + UI TRANSPARENCY
+-- LocalScript
+-- StarterPlayer > StarterPlayerScripts
+--========================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local Player = Players.LocalPlayer
+
+--========================================================
+-- SETTINGS
+--========================================================
+
+local Settings = {
+	Blocks = 25,
+	Distance = 10,
+	Height = 20,
+
+	OrbitSpeed = 3.5,
+
+	PullSpeed = 180,
+	MaxPullSpeed = 650,
+	PullAcceleration = 14,
+
+	SpinSpeed = 8,
+	ScanInterval = 0.20,
+
+	-- false = unanchored parts don't collide with character
+	Collision = true,
+
+	-- UI ONLY
+	Theme = "DEFAULT",
+	UITransparency = 0.60,
+}
+
+local Limits = {
+	Blocks = {1,300},
+	Distance = {2,100},
+	Height = {3,150},
+}
+
+--========================================================
+-- UI THEMES
+--========================================================
+
+local ThemeOrder = {
+	"DEFAULT",
+	"BLUE",
+	"GREEN",
+	"YELLOW",
+	"RED",
+	"WHITE",
+	"SKYBLUE",
+	"BLACK",
+	"GRAY",
+	"ORANGE",
+	"PURPLE",
+	"RGB",
+}
+
+local ThemeNames = {
+	DEFAULT = "DEFAULT",
+	BLUE = "BLUE",
+	GREEN = "GREEN",
+	YELLOW = "YELLOW",
+	RED = "RED",
+	WHITE = "WHITE",
+	SKYBLUE = "SKY BLUE",
+	BLACK = "BLACK",
+	GRAY = "GRAY",
+	ORANGE = "ORANGE",
+	PURPLE = "PURPLE",
+	RGB = "RGB",
+}
+
+--========================================================
+-- STATE
+--========================================================
+
+local Enabled = false
+local SettingsOpened = true
+
+local Objects = {}
+
+local Clock = 0
+local ScanClock = 0
+
+local CachedParts = {}
+local CacheIndex = 1
+
+-- Keeps original collision values
+local OriginalCollision = {}
+
+-- UI only
+local RGBHue = 0
+
+--========================================================
+-- GUI
+--========================================================
+
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+local OldGui = PlayerGui:FindFirstChild("Telekinesis")
+
+if OldGui then
+	OldGui:Destroy()
+end
+
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "Telekinesis | Made by hzReyzn"
+Gui.ResetOnSpawn = false
+Gui.Parent = PlayerGui
+
+local Window = Instance.new("Frame")
+Window.Name = "Window"
+Window.Size = UDim2.fromOffset(224,286)
+Window.Position = UDim2.new(0,20,0.5,-143)
+Window.BackgroundColor3 = Color3.fromRGB(163,162,165)
+Window.BorderColor3 = Color3.fromRGB(45,45,45)
+Window.BorderSizePixel = 2
+Window.Parent = Gui
+
+local TopBar = Instance.new("Frame")
+TopBar.Size = UDim2.new(1,-4,0,24)
+TopBar.Position = UDim2.fromOffset(2,2)
+TopBar.BackgroundColor3 = Color3.fromRGB(78,105,135)
+TopBar.BorderColor3 = Color3.fromRGB(40,40,40)
+TopBar.BorderSizePixel = 1
+TopBar.Active = true
+TopBar.Parent = Window
+
+local Title = Instance.new("TextLabel")
+Title.BackgroundTransparency = 1
+Title.Position = UDim2.fromOffset(6,0)
+Title.Size = UDim2.new(1,-40,1,0)
+Title.Text = "Telekinesis | Made by hzReyzn"
+Title.TextColor3 = Color3.new(1,1,1)
+Title.TextSize = 14
+Title.Font = Enum.Font.ArialBold
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = TopBar
+
+local SettingsButton = Instance.new("TextButton")
+SettingsButton.Size = UDim2.fromOffset(24,18)
+SettingsButton.Position = UDim2.new(1,-28,0,3)
+SettingsButton.BackgroundColor3 = Color3.fromRGB(190,190,190)
+SettingsButton.BorderColor3 = Color3.fromRGB(40,40,40)
+SettingsButton.Text = "-"
+SettingsButton.TextColor3 = Color3.fromRGB(20,20,20)
+SettingsButton.TextSize = 15
+SettingsButton.Font = Enum.Font.ArialBold
+SettingsButton.Parent = TopBar
+
+--========================================================
+-- TELEKINESIS TOGGLE
+--========================================================
+
+local Toggle = Instance.new("TextButton")
+Toggle.Size = UDim2.new(1,-16,0,32)
+Toggle.Position = UDim2.fromOffset(8,34)
+Toggle.BackgroundColor3 = Color3.fromRGB(205,205,205)
+Toggle.BorderColor3 = Color3.fromRGB(60,60,60)
+Toggle.BorderSizePixel = 2
+Toggle.Text = "Enable"
+Toggle.TextColor3 = Color3.fromRGB(25,25,25)
+Toggle.TextSize = 14
+Toggle.Font = Enum.Font.ArialBold
+Toggle.Parent = Window
+
+local Status = Instance.new("Frame")
+Status.Size = UDim2.fromOffset(9,9)
+Status.Position = UDim2.new(1,-17,0.5,-4)
+Status.BackgroundColor3 = Color3.fromRGB(125,30,30)
+Status.BorderColor3 = Color3.fromRGB(40,40,40)
+Status.Parent = Toggle
+
+--========================================================
+-- SETTINGS FRAME
+--========================================================
+
+local SettingsFrame = Instance.new("Frame")
+SettingsFrame.Name = "Settings"
+SettingsFrame.BackgroundTransparency = 1
+SettingsFrame.Position = UDim2.fromOffset(0,70)
+SettingsFrame.Size = UDim2.new(1,0,0,210)
+SettingsFrame.Parent = Window
+
+-- UI-only collections
+
+local ThemeButtons = {}
+local ThemeLabels = {}
+local ThemeValues = {}
+
+local TransparentObjects = {
+	Window,
+	TopBar,
+	SettingsButton,
+	Toggle,
+}
+
+local function RegisterButton(Object)
+	table.insert(ThemeButtons,Object)
+	table.insert(TransparentObjects,Object)
+end
+
+local function RegisterValue(Object)
+	table.insert(ThemeValues,Object)
+	table.insert(TransparentObjects,Object)
+end
+
+--========================================================
+-- SETTINGS CREATOR
+--========================================================
+
+local function CreateSetting(Name,Y,Setting,Step)
+
+	local Label = Instance.new("TextLabel")
+	Label.BackgroundTransparency = 1
+	Label.Position = UDim2.fromOffset(8,Y)
+	Label.Size = UDim2.fromOffset(84,24)
+	Label.Text = Name
+	Label.TextColor3 = Color3.fromRGB(20,20,20)
+	Label.TextSize = 13
+	Label.Font = Enum.Font.Arial
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = SettingsFrame
+
+	table.insert(ThemeLabels,Label)
+
+	local Minus = Instance.new("TextButton")
+	Minus.Size = UDim2.fromOffset(28,24)
+	Minus.Position = UDim2.fromOffset(94,Y)
+	Minus.Text = "-"
+	Minus.TextSize = 16
+	Minus.Font = Enum.Font.ArialBold
+	Minus.BackgroundColor3 = Color3.fromRGB(205,205,205)
+	Minus.BorderColor3 = Color3.fromRGB(70,70,70)
+	Minus.Parent = SettingsFrame
+
+	RegisterButton(Minus)
+
+	local Value = Instance.new("TextLabel")
+	Value.Size = UDim2.fromOffset(50,24)
+	Value.Position = UDim2.fromOffset(125,Y)
+	Value.Text = tostring(Settings[Setting])
+	Value.TextSize = 13
+	Value.Font = Enum.Font.ArialBold
+	Value.BackgroundColor3 = Color3.fromRGB(235,235,235)
+	Value.BorderColor3 = Color3.fromRGB(80,80,80)
+	Value.TextColor3 = Color3.fromRGB(20,20,20)
+	Value.Parent = SettingsFrame
+
+	RegisterValue(Value)
+
+	local Plus = Instance.new("TextButton")
+	Plus.Size = UDim2.fromOffset(28,24)
+	Plus.Position = UDim2.fromOffset(178,Y)
+	Plus.Text = "+"
+	Plus.TextSize = 16
+	Plus.Font = Enum.Font.ArialBold
+	Plus.BackgroundColor3 = Color3.fromRGB(205,205,205)
+	Plus.BorderColor3 = Color3.fromRGB(70,70,70)
+	Plus.Parent = SettingsFrame
+
+	RegisterButton(Plus)
+
+	local function Change(Amount)
+
+		local Limit = Limits[Setting]
+
+		Settings[Setting] =
+			math.clamp(
+				Settings[Setting] + Amount,
+				Limit[1],
+				Limit[2]
+			)
+
+		Value.Text = tostring(Settings[Setting])
+	end
+
+	Minus.Activated:Connect(function()
+		Change(-Step)
+	end)
+
+	Plus.Activated:Connect(function()
+		Change(Step)
+	end)
+end
+
+CreateSetting("Blocks",6,"Blocks",5)
+CreateSetting("Distance",38,"Distance",1)
+CreateSetting("Height",70,"Height",1)
+
+--========================================================
+-- COLLISION BUTTON
+--========================================================
+
+local CollisionButton = Instance.new("TextButton")
+CollisionButton.Size = UDim2.new(1,-16,0,28)
+CollisionButton.Position = UDim2.fromOffset(8,102)
+CollisionButton.BackgroundColor3 = Color3.fromRGB(205,205,205)
+CollisionButton.BorderColor3 = Color3.fromRGB(60,60,60)
+CollisionButton.BorderSizePixel = 2
+CollisionButton.Text = "Collision: ON"
+CollisionButton.TextColor3 = Color3.fromRGB(25,25,25)
+CollisionButton.TextSize = 13
+CollisionButton.Font = Enum.Font.ArialBold
+CollisionButton.Parent = SettingsFrame
+
+RegisterButton(CollisionButton)
+
+--========================================================
+-- THEME BUTTON
+--========================================================
+
+local ThemeButton = Instance.new("TextButton")
+ThemeButton.Size = UDim2.new(1,-16,0,28)
+ThemeButton.Position = UDim2.fromOffset(8,136)
+ThemeButton.BackgroundColor3 = Color3.fromRGB(205,205,205)
+ThemeButton.BorderColor3 = Color3.fromRGB(60,60,60)
+ThemeButton.BorderSizePixel = 2
+ThemeButton.Text = "Theme: DEFAULT"
+ThemeButton.TextColor3 = Color3.fromRGB(25,25,25)
+ThemeButton.TextSize = 13
+ThemeButton.Font = Enum.Font.ArialBold
+ThemeButton.Parent = SettingsFrame
+
+RegisterButton(ThemeButton)
+--========================================================
+-- TRANSPARENCY CONTROL
+--========================================================
+
+local TransparencyLabel = Instance.new("TextLabel")
+TransparencyLabel.BackgroundTransparency = 1
+TransparencyLabel.Position = UDim2.fromOffset(8,170)
+TransparencyLabel.Size = UDim2.fromOffset(84,24)
+TransparencyLabel.Text = "Transparency"
+TransparencyLabel.TextColor3 = Color3.fromRGB(20,20,20)
+TransparencyLabel.TextSize = 12
+TransparencyLabel.Font = Enum.Font.Arial
+TransparencyLabel.TextXAlignment = Enum.TextXAlignment.Left
+TransparencyLabel.Parent = SettingsFrame
+
+table.insert(ThemeLabels,TransparencyLabel)
+
+local TransparencyMinus = Instance.new("TextButton")
+TransparencyMinus.Size = UDim2.fromOffset(28,24)
+TransparencyMinus.Position = UDim2.fromOffset(94,170)
+TransparencyMinus.Text = "-"
+TransparencyMinus.TextSize = 16
+TransparencyMinus.Font = Enum.Font.ArialBold
+TransparencyMinus.Parent = SettingsFrame
+
+RegisterButton(TransparencyMinus)
+
+local TransparencyValue = Instance.new("TextLabel")
+TransparencyValue.Size = UDim2.fromOffset(50,24)
+TransparencyValue.Position = UDim2.fromOffset(125,170)
+TransparencyValue.Text = "60%"
+TransparencyValue.TextSize = 13
+TransparencyValue.Font = Enum.Font.ArialBold
+TransparencyValue.Parent = SettingsFrame
+
+RegisterValue(TransparencyValue)
+
+local TransparencyPlus = Instance.new("TextButton")
+TransparencyPlus.Size = UDim2.fromOffset(28,24)
+TransparencyPlus.Position = UDim2.fromOffset(178,170)
+TransparencyPlus.Text = "+"
+TransparencyPlus.TextSize = 16
+TransparencyPlus.Font = Enum.Font.ArialBold
+TransparencyPlus.Parent = SettingsFrame
+
+RegisterButton(TransparencyPlus)
+
+--========================================================
+-- UI THEMES
+-- ONLY COLORS, NOTHING PHYSICAL
+--========================================================
+
+local Themes = {
+
+	DEFAULT = {
+		Window = Color3.fromRGB(163,162,165),
+		Button = Color3.fromRGB(205,205,205),
+		Value = Color3.fromRGB(235,235,235),
+		Accent = Color3.fromRGB(78,105,135),
+		Border = Color3.fromRGB(45,45,45),
+		Text = Color3.fromRGB(20,20,20),
+		AccentText = Color3.fromRGB(255,255,255),
+	},
+
+	BLUE = {
+		Window = Color3.fromRGB(60,90,145),
+		Button = Color3.fromRGB(90,125,185),
+		Value = Color3.fromRGB(130,165,215),
+		Accent = Color3.fromRGB(35,90,195),
+		Border = Color3.fromRGB(25,45,80),
+		Text = Color3.fromRGB(255,255,255),
+		AccentText = Color3.fromRGB(255,255,255),
+	},
+
+	GREEN = {
+		Window = Color3.fromRGB(65,125,75),
+		Button = Color3.fromRGB(95,165,105),
+		Value = Color3.fromRGB(135,200,145),
+		Accent = Color3.fromRGB(35,160,65),
+		Border = Color3.fromRGB(25,70,35),
+		Text = Color3.fromRGB(255,255,255),
+		AccentText = Color3.fromRGB(255,255,255),
+	},
+
+	YELLOW = {
+		Window = Color3.fromRGB(190,165,55),
+		Button = Color3.fromRGB(225,205,85),
+		Value = Color3.fromRGB(245,230,135),
+		Accent = Color3.fromRGB(245,200,25),
+		Border = Color3.fromRGB(100,80,10),
+		Text = Color3.fromRGB(30,25,5),
+		AccentText = Color3.fromRGB(25,20,5),
+	},
+
+	RED = {
+		Window = Color3.fromRGB(135,55,55),
+		Button = Color3.fromRGB(185,80,80),
+		Value = Color3.fromRGB(215,115,115),
+		Accent = Color3.fromRGB(195,35,35),
+		Border = Color3.fromRGB(75,20,20),
+		Text = Color3.fromRGB(255,255,255),
+		AccentText = Color3.fromRGB(255,255,255),
+	},
+
+	WHITE = {
+		Window = Color3.fromRGB(245,245,245),
+		Button = Color3.fromRGB(225,225,225),
+		Value = Color3.fromRGB(255,255,255),
+		Accent = Color3.fromRGB(255,255,255),
+		Border = Color3.fromRGB(90,90,90),
+		Text = Color3.fromRGB(20,20,20),
+		AccentText = Color3.fromRGB(20,20,20),
+	},
+
+	SKYBLUE = {
+		Window = Color3.fromRGB(105,185,225),
+		Button = Color3.fromRGB(140,210,240),
+		Value = Color3.fromRGB(185,235,250),
+		Accent = Color3.fromRGB(45,190,240),
+		Border = Color3.fromRGB(35,95,125),
+		Text = Color3.fromRGB(15,35,50),
+		AccentText = Color3.fromRGB(255,255,255),
+	},
+
+	BLACK = {
+		Window = Color3.fromRGB(25,25,25),
+		Button = Color3.fromRGB(45,45,45),
+		Value = Color3.fromRGB(70,70,70),
+		Accent = Color3.fromRGB(10,10,10),
+		Border = Color3.fromRGB(110,110,110),
+		Text = Color3.fromRGB(245,245,245),
+		AccentText = Color3.fromRGB(255,255,255),
+	},
+
+	GRAY = {
+		Window = Color3.fromRGB(100,100,100),
+		Button = Color3.fromRGB(135,135,135),
+		Value = Color3.fromRGB(175,175,175),
+		Accent = Color3.fromRGB(75,75,75),
+		Border = Color3.fromRGB(45,45,45),
+		Text = Color3.fromRGB(255,255,255),
+		AccentText = Color3.fromRGB(255,255,255),
+	},
+
+	ORANGE = {
+		Window = Color3.fromRGB(175,100,35),
+		Button = Color3.fromRGB(215,130,50),
+		Value = Color3.fromRGB(240,165,80),
+		Accent = Color3.fromRGB(240,110,20),
+		Border = Color3.fromRGB(95,45,10),
+		Text = Color3.fromRGB(255,255,255),
+		AccentText = Color3.fromRGB(255,255,255),
+	},
+
+	PURPLE = {
+		Window = Color3.fromRGB(100,60,135),
+		Button = Color3.fromRGB(140,85,180),
+		Value = Color3.fromRGB(175,120,210),
+		Accent = Color3.fromRGB(130,45,195),
+		Border = Color3.fromRGB(55,25,80),
+		Text = Color3.fromRGB(255,255,255),
+		AccentText = Color3.fromRGB(255,255,255),
+	},
+}
+
+local function Darken(Color,Amount)
+
+	return Color3.new(
+		Color.R * Amount,
+		Color.G * Amount,
+		Color.B * Amount
+	)
+end
+
+--========================================================
+-- TRANSPARENCY
+-- UI ONLY
+--========================================================
+
+local function ApplyUITransparency()
+
+	local Amount =
+		math.clamp(
+			Settings.UITransparency,
+			0,
+			0.90
+		)
+
+	for _,Object in ipairs(TransparentObjects) do
+
+		if Object and Object.Parent then
+			Object.BackgroundTransparency = Amount
+		end
+	end
+
+	-- Text stays fully visible.
+	-- Status stays easy to read.
+	Status.BackgroundTransparency = 0.1
+
+	TransparencyValue.Text =
+		tostring(
+			math.round(Amount * 100)
+		) .. "%"
+end
+
+--========================================================
+-- APPLY THEME
+-- UI ONLY
+--========================================================
+
+local function ApplyTheme(Name,RGBColor)
+
+	local Theme
+
+	if Name == "RGB" then
+
+		local Main =
+			RGBColor
+			or Color3.fromHSV(
+				RGBHue,
+				1,
+				1
+			)
+
+		Theme = {
+			Window = Darken(Main,0.35),
+			Button = Darken(Main,0.55),
+			Value = Darken(Main,0.75),
+			Accent = Main,
+			Border = Darken(Main,0.20),
+			Text = Color3.fromRGB(255,255,255),
+			AccentText = Color3.fromRGB(255,255,255),
+		}
+
+	else
+
+		Theme = Themes[Name]
+	end
+
+	if not Theme then
+		return
+	end
+
+	Window.BackgroundColor3 = Theme.Window
+	Window.BorderColor3 = Theme.Border
+
+	TopBar.BackgroundColor3 = Theme.Accent
+	TopBar.BorderColor3 = Theme.Border
+
+	Title.TextColor3 = Theme.AccentText
+
+	SettingsButton.BackgroundColor3 = Theme.Button
+	SettingsButton.BorderColor3 = Theme.Border
+	SettingsButton.TextColor3 = Theme.Text
+
+	Toggle.BackgroundColor3 = Theme.Button
+	Toggle.BorderColor3 = Theme.Border
+	Toggle.TextColor3 = Theme.Text
+
+	for _,Button in ipairs(ThemeButtons) do
+
+		Button.BackgroundColor3 = Theme.Button
+		Button.BorderColor3 = Theme.Border
+		Button.TextColor3 = Theme.Text
+	end
+
+	for _,Label in ipairs(ThemeLabels) do
+		Label.TextColor3 = Theme.Text
+	end
+
+	for _,Value in ipairs(ThemeValues) do
+
+		Value.BackgroundColor3 = Theme.Value
+		Value.BorderColor3 = Theme.Border
+		Value.TextColor3 = Theme.Text
+	end
+
+	ThemeButton.Text =
+		"Theme: "
+		.. ThemeNames[Name]
+
+	ApplyUITransparency()
+end
+
+--========================================================
+-- THEME BUTTON
+--========================================================
+
+ThemeButton.Activated:Connect(function()
+
+	local Current = 1
+
+	for Index,Name in ipairs(ThemeOrder) do
+
+		if Name == Settings.Theme then
+			Current = Index
+			break
+		end
+	end
+
+	Current += 1
+
+	if Current > #ThemeOrder then
+		Current = 1
+	end
+
+	Settings.Theme =
+		ThemeOrder[Current]
+
+	ApplyTheme(Settings.Theme)
+end)
+
+--========================================================
+-- TRANSPARENCY BUTTONS
+--========================================================
+
+local function ChangeTransparency(Change)
+
+	Settings.UITransparency =
+		math.clamp(
+			Settings.UITransparency + Change,
+			0,
+			0.90
+		)
+
+	Settings.UITransparency =
+		math.round(
+			Settings.UITransparency * 10
+		) / 10
+
+	ApplyUITransparency()
+end
+
+TransparencyMinus.Activated:Connect(function()
+
+	ChangeTransparency(-0.10)
+
+end)
+
+TransparencyPlus.Activated:Connect(function()
+
+	ChangeTransparency(0.10)
+
+end)
+
+ApplyTheme(Settings.Theme)
+ApplyUITransparency()
+
+--========================================================
+-- RGB ANIMATION
+-- UI ONLY
+--========================================================
+
+RunService.RenderStepped:Connect(function(DT)
+
+	if Settings.Theme ~= "RGB" then
+		return
+	end
+
+	RGBHue =
+		(RGBHue + DT * 0.10) % 1
+
+	ApplyTheme(
+		"RGB",
+		Color3.fromHSV(
+			RGBHue,
+			1,
+			1
+		)
+	)
+end)
+
+--========================================================
+-- SETTINGS OPEN/CLOSE
+--========================================================
+
+SettingsButton.Activated:Connect(function()
+
+	SettingsOpened = not SettingsOpened
+	SettingsFrame.Visible = SettingsOpened
+
+	if SettingsOpened then
+
+		SettingsButton.Text = "-"
+		Window.Size = UDim2.fromOffset(224,286)
+
+	else
+
+		SettingsButton.Text = "+"
+		Window.Size = UDim2.fromOffset(224,74)
+
+	end
+end)
+
+--========================================================
+-- DRAG PC + MOBILE
+--========================================================
+
+local Dragging = false
+local DragStart
+local StartPosition
+local DragInput
+
+TopBar.InputBegan:Connect(function(Input)
+
+	if Input.UserInputType == Enum.UserInputType.MouseButton1
+		or Input.UserInputType == Enum.UserInputType.Touch
+	then
+
+		Dragging = true
+		DragStart = Input.Position
+		StartPosition = Window.Position
+	end
+end)
+
+TopBar.InputChanged:Connect(function(Input)
+
+	if Input.UserInputType == Enum.UserInputType.MouseMovement
+		or Input.UserInputType == Enum.UserInputType.Touch
+	then
+
+		DragInput = Input
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(Input)
+
+	if not Dragging or Input ~= DragInput then
+		return
+	end
+
+	local Delta = Input.Position - DragStart
+
+	Window.Position =
+		UDim2.new(
+			StartPosition.X.Scale,
+			StartPosition.X.Offset + Delta.X,
+			StartPosition.Y.Scale,
+			StartPosition.Y.Offset + Delta.Y
+		)
+end)
+
+UserInputService.InputEnded:Connect(function(Input)
+
+	if Input.UserInputType == Enum.UserInputType.MouseButton1
+		or Input.UserInputType == Enum.UserInputType.Touch
+	then
+
+		Dragging = false
+	end
+--========================================================
+-- HELPERS
+-- ORIGINAL LOGIC BELOW
+--========================================================
+
+local function BelongsToCharacter(Part)
+
+	local Model =
+		Part:FindFirstAncestorOfClass("Model")
+
+	if Model
+		and Model:FindFirstChildOfClass("Humanoid")
+	then
+
+		return true
+	end
+
+	return false
+end
+
+local function IsSpecialPart(Part)
+
+	if not Part then
+		return false
+	end
+
+	return Part.Name == "VolcanoPart"
+		or Part.Name == "AvalanchePart"
+end
+
+--========================================================
+-- COLLISION SYSTEM
+--========================================================
+
+local function DisablePartCollision(Part)
+
+	if not Part
+		or not Part.Parent
+		or not Part:IsA("BasePart")
+	then
+		return
+	end
+
+	if Part.Anchored then
+		return
+	end
+
+	local Character = Player.Character
+
+	if Character and Part:IsDescendantOf(Character) then
+		return
+	end
+
+	if BelongsToCharacter(Part) then
+		return
+	end
+
+	if OriginalCollision[Part] == nil then
+		OriginalCollision[Part] = Part.CanCollide
+	end
+
+	Part.CanCollide = false
+end
+
+local function DisableAllCollision()
+
+	for _,Object in ipairs(workspace:GetDescendants()) do
+
+		if Object:IsA("BasePart")
+			and not Object.Anchored
+		then
+
+			DisablePartCollision(Object)
+		end
+	end
+end
+
+local function RestoreCollision()
+
+	for Part,OriginalValue in pairs(OriginalCollision) do
+
+		if Part and Part.Parent then
+			Part.CanCollide = OriginalValue
+		end
+	end
+
+	table.clear(OriginalCollision)
+end
+
+local function ApplyCollisionMode()
+
+	if Settings.Collision then
+		RestoreCollision()
+	else
+		DisableAllCollision()
+	end
+end
+
+CollisionButton.Activated:Connect(function()
+
+	Settings.Collision = not Settings.Collision
+
+	if Settings.Collision then
+
+		CollisionButton.Text = "Collision: ON"
+		RestoreCollision()
+
+	else
+
+		CollisionButton.Text = "Collision: OFF"
+		DisableAllCollision()
+
+	end
+end)
+
+-- Handle newly created unanchored parts
+workspace.DescendantAdded:Connect(function(Object)
+
+	if Settings.Collision then
+		return
+	end
+
+	if not Object:IsA("BasePart") then
+		return
+	end
+
+	task.defer(function()
+
+		if Object.Parent and not Object.Anchored then
+			DisablePartCollision(Object)
+		end
+	end)
+end)
+
+--========================================================
+-- ADD OBJECT
+--========================================================
+
+local function AddObject(Part)
+
+	if not Part
+		or not Part.Parent
+		or not Part:IsA("BasePart")
+	then
+		return false
+	end
+
+	local Special = IsSpecialPart(Part)
+
+	if Part.Anchored and not Special then
+		return false
+	end
+
+	local Character = Player.Character
+
+	if Character and Part:IsDescendantOf(Character) then
+		return false
+	end
+
+	if BelongsToCharacter(Part) then
+		return false
+	end
+
+	local Root =
+		Part.AssemblyRootPart or Part
+
+	if not Root or not Root.Parent then
+		return false
+	end
+
+	if Objects[Root] then
+		return false
+	end
+
+	if Root.Anchored and not Special then
+		return false
+	end
+
+	if Character and Root:IsDescendantOf(Character) then
+		return false
+	end
+
+	if BelongsToCharacter(Root) then
+		return false
+	end
+
+	local Attachment =
+		Instance.new("Attachment")
+
+	Attachment.Name = "TelekinesisAttachment"
+	Attachment.Parent = Root
+
+	local Align =
+		Instance.new("AlignPosition")
+
+	Align.Name = "TelekinesisPosition"
+	Align.Mode = Enum.PositionAlignmentMode.OneAttachment
+	Align.Attachment0 = Attachment
+	Align.ApplyAtCenterOfMass = true
+	Align.MaxForce = math.huge
+	Align.MaxVelocity = math.huge
+	Align.Responsiveness = 500
+	Align.RigidityEnabled = false
+	Align.Parent = Root
+
+	Objects[Root] = {
+
+		Attachment = Attachment,
+		Align = Align,
+
+		Special = Special,
+
+		Angle =
+			math.random()
+			* math.pi
+			* 2,
+
+		HeightSeed =
+			math.random(),
+
+		RadiusSeed =
+			math.random(),
+
+		Speed =
+			math.random(80,135)
+			/ 100,
+
+		SpinDirection =
+			math.random(0,1) == 1
+			and 1
+			or -1
+	}
+
+	return true
+end
+
+--========================================================
+-- REMOVE / RELEASE
+--========================================================
+
+local function RemoveObject(Root)
+
+	local Data = Objects[Root]
+
+	if not Data then
+		return
+	end
+
+	if Data.Align then
+		Data.Align:Destroy()
+	end
+
+	if Data.Attachment then
+		Data.Attachment:Destroy()
+	end
+
+	Objects[Root] = nil
+end
+
+local function ReleaseEverything()
+
+	local List = {}
+
+	for Root in pairs(Objects) do
+		table.insert(List,Root)
+	end
+
+	for _,Root in ipairs(List) do
+		RemoveObject(Root)
+	end
+end
+
+local function ObjectCount()
+
+	local Amount = 0
+
+	for _ in pairs(Objects) do
+		Amount += 1
+	end
+
+	return Amount
+end
+
+local function EnforceBlockLimit()
+
+	local Amount = ObjectCount()
+
+	if Amount <= Settings.Blocks then
+		return
+	end
+
+	local Extra =
+		Amount - Settings.Blocks
+
+	for Root in pairs(Objects) do
+
+		if Extra <= 0 then
+			break
+		end
+
+		RemoveObject(Root)
+
+		Extra -= 1
+	end
+end
+
+--========================================================
+-- CACHE
+--========================================================
+
+local function RefreshCache()
+
+	CachedParts =
+		workspace:GetDescendants()
+
+	CacheIndex = 1
+end
+
+RefreshCache()
+
+--========================================================
+-- GLOBAL SCAN
+--========================================================
+
+local function ScanGlobal()
+
+	local Amount = ObjectCount()
+
+	if Amount >= Settings.Blocks then
+		return
+	end
+
+	if CacheIndex > #CachedParts then
+		RefreshCache()
+	end
+
+	local Processed = 0
+	local ChunkSize = 750
+
+	while CacheIndex <= #CachedParts
+		and Processed < ChunkSize
+	do
+
+		if Amount >= Settings.Blocks then
+			break
+		end
+
+		local Object =
+			CachedParts[CacheIndex]
+
+		CacheIndex += 1
+		Processed += 1
+
+		if Object
+			and Object.Parent
+			and Object:IsA("BasePart")
+			and (
+				not Object.Anchored
+				or IsSpecialPart(Object)
+			)
+		then
+
+			if AddObject(Object) then
+				Amount += 1
+			end
+		end
+	end
+end
+end)
+--========================================================
+-- TELEKINESIS TOGGLE
+--========================================================
+
+Toggle.Activated:Connect(function()
+
+	Enabled = not Enabled
+
+	if Enabled then
+
+		Toggle.Text = "Disable"
+
+		Status.BackgroundColor3 =
+			Color3.fromRGB(40,175,55)
+
+		RefreshCache()
+		ScanClock = Settings.ScanInterval
+
+	else
+
+		Toggle.Text = "Enable"
+
+		Status.BackgroundColor3 =
+			Color3.fromRGB(125,30,30)
+
+		ReleaseEverything()
+	end
+end)
+
+--========================================================
+-- MAIN TELEKINESIS
+-- ORIGINAL PHYSICS
+--========================================================
+
+RunService.Heartbeat:Connect(function(DT)
+
+	if not Enabled then
+		return
+	end
+
+	local Character = Player.Character
+
+	if not Character then
+		return
+	end
+
+	local PlayerRoot =
+		Character:FindFirstChild("HumanoidRootPart")
+
+	if not PlayerRoot then
+		return
+	end
+
+	Clock += DT * Settings.OrbitSpeed
+	ScanClock += DT
+
+	EnforceBlockLimit()
+
+	if ScanClock >= Settings.ScanInterval then
+
+		ScanClock = 0
+		ScanGlobal()
+	end
+
+	local Index = 0
+
+	for Root,Data in pairs(Objects) do
+
+		if not Root or not Root.Parent then
+
+			RemoveObject(Root)
+			continue
+		end
+
+		if Root.Anchored and not Data.Special then
+
+			RemoveObject(Root)
+			continue
+		end
+
+		Index += 1
+
+		local Angle =
+			Clock * Data.Speed
+			+ Data.Angle
+			+ Index * 0.28
+
+		local Vertical =
+			(
+				Data.HeightSeed
+				* Settings.Height
+				+ Clock * 2.4
+			)
+			% Settings.Height
+
+		local HeightRatio =
+			Vertical / Settings.Height
+
+		local Radius =
+			Settings.Distance
+			+ Data.RadiusSeed * 3
+			+ HeightRatio * 4
+
+		local X =
+			math.cos(Angle) * Radius
+
+		local Z =
+			math.sin(Angle) * Radius
+
+		local Target =
+			PlayerRoot.Position
+			+ Vector3.new(
+				X,
+				2.5 + Vertical,
+				Z
+			)
+
+		if Data.Align and Data.Align.Parent then
+			Data.Align.Position = Target
+		end
+
+		if not Root.Anchored then
+
+			local Offset =
+				Target - Root.Position
+
+			local Distance =
+				Offset.Magnitude
+
+			if Distance > 0.05 then
+
+				local Speed =
+					math.min(
+						Settings.PullSpeed
+							+ Distance * 7,
+						Settings.MaxPullSpeed
+					)
+
+				local DesiredVelocity =
+					Offset.Unit * Speed
+
+				local Alpha =
+					math.clamp(
+						DT * Settings.PullAcceleration,
+						0,
+						1
+					)
+
+				Root.AssemblyLinearVelocity =
+					Root.AssemblyLinearVelocity:Lerp(
+						DesiredVelocity,
+						Alpha
+					)
+			end
+
+			Root.AssemblyAngularVelocity =
+				Vector3.new(
+					2.5,
+					Settings.SpinSpeed
+						* Data.SpinDirection,
+					1.5
+				)
+		end
+	end
+end)
+
+--========================================================
+-- RESPAWN FIX
+--========================================================
+
+Player.CharacterAdded:Connect(function(Character)
+
+	-- Remember previous state
+	local WasEnabled = Enabled
+
+	-- Temporarily pause telekinesis
+	Enabled = false
+
+	Clock = 0
+	ScanClock = 0
+
+	ReleaseEverything()
+
+	local PlayerRoot =
+		Character:WaitForChild(
+			"HumanoidRootPart",
+			10
+		)
+
+	if not PlayerRoot then
+
+		Toggle.Text = "Enable"
+
+		Status.BackgroundColor3 =
+			Color3.fromRGB(125,30,30)
+
+		return
+	end
+
+	task.wait(0.5)
+
+	RefreshCache()
+
+	CacheIndex = 1
+	ScanClock = Settings.ScanInterval
+
+	-- Reapply collision preference after respawn
+	ApplyCollisionMode()
+
+	-- Restore telekinesis state
+	Enabled = WasEnabled
+
+	if Enabled then
+
+		Toggle.Text = "Disable"
+
+		Status.BackgroundColor3 =
+			Color3.fromRGB(40,175,55)
+
+	else
+
+		Toggle.Text = "Enable"
+
+		Status.BackgroundColor3 =
+			Color3.fromRGB(125,30,30)
+
+	end
+
+	-- UI ONLY
+	ApplyTheme(Settings.Theme)
+	ApplyUITransparency()
+end)
+
+--========================================================
+-- CLEANUP
+--========================================================
+
+Gui.Destroying:Connect(function()
+
+	ReleaseEverything()
+	RestoreCollision()
+
+end)
