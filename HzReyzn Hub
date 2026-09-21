@@ -110,6 +110,7 @@ connect(gui.Destroying, function()
 end)
 
 local surface = make("Frame", gui, {
+    ZIndex = 1,
     Size = UDim2.fromScale(1, 1),
     BackgroundTransparency = 1,
 })
@@ -1390,7 +1391,7 @@ do
     end
     local rejoin=action("Rejoin",1)
     local hop=action("Server hop",2)
-    local low=action("Low population",3)
+    local low=action("Few players",3)
     local fpsButton=action("FPS",4)
     local fpsFrame=make("Frame",surface,{
         Name="HZFPS",Position=UDim2.fromOffset(20,70),Size=UDim2.fromOffset(150,48),
@@ -1510,35 +1511,35 @@ do
     connect(low.Activated,function() start(low,"low") end)
 
     local toast=make("CanvasGroup",gui,{
-        Name="Welcome",AnchorPoint=Vector2.new(1,1),Position=UDim2.new(1,450,1,-20),
-        Size=UDim2.fromOffset(400,132),BackgroundColor3=dark,BorderSizePixel=0,
-        GroupTransparency=1,Visible=false,ZIndex=40,
+        Name="Welcome",AnchorPoint=Vector2.new(1,1),Position=UDim2.new(1,350,1,-8),
+        Size=UDim2.fromOffset(320,68),BackgroundColor3=dark,BorderSizePixel=0,
+        GroupTransparency=1,Visible=false,ZIndex=0,
     })
-    round(toast,16)
+    round(toast,10)
     local toastScale=make("UIScale",toast,{Scale=1})
     local edge=make("UIStroke",toast,{Thickness=1.5,Color=accentColor})
-    local avatar=make("Frame",toast,{Position=UDim2.fromOffset(16,22),Size=UDim2.fromOffset(64,64),
+    local avatar=make("Frame",toast,{Position=UDim2.fromOffset(10,10),Size=UDim2.fromOffset(38,38),
         BackgroundColor3=panelColor,BorderSizePixel=0})
-    round(avatar,14)
-    local hz=label(avatar,"HZ",UDim2.fromScale(0,0),UDim2.fromScale(1,1),25,accentColor)
+    round(avatar,9)
+    local hz=label(avatar,"HZ",UDim2.fromScale(0,0),UDim2.fromScale(1,1),18,accentColor)
     hz.TextXAlignment=Enum.TextXAlignment.Center;hz.Font=Enum.Font.GothamBold
-    label(toast,"Welcome",UDim2.fromOffset(94,15),UDim2.fromOffset(245,24),19,white)
-    local brand=label(toast,"HZREYZN HUB",UDim2.fromOffset(94,42),UDim2.fromOffset(265,21),13,accentColor)
-    local message=label(toast,"¡HzReyzn Hub Loaded without errors!",UDim2.fromOffset(94,65),
-        UDim2.fromOffset(280,36),12,white)
+    label(toast,"Welcome",UDim2.fromOffset(58,6),UDim2.fromOffset(220,18),14,white)
+    local brand=label(toast,"HZREYZN HUB",UDim2.fromOffset(58,24),UDim2.fromOffset(220,14),10,accentColor)
+    local message=label(toast,"¡HzReyzn Hub Loaded without errors!",UDim2.fromOffset(58,39),
+        UDim2.fromOffset(250,15),10,white)
     message.TextWrapped=true
-    local timerTrack=make("Frame",toast,{Position=UDim2.fromOffset(16,114),Size=UDim2.new(1,-32,0,4),
+    local timerTrack=make("Frame",toast,{Position=UDim2.fromOffset(10,60),Size=UDim2.new(1,-20,0,3),
         BackgroundColor3=panelColor,BorderSizePixel=0})
     round(timerTrack,2)
     local timer=make("Frame",timerTrack,{Size=UDim2.fromScale(1,1),BackgroundColor3=accentColor,BorderSizePixel=0})
     round(timer,2)
-    local dismiss=button(toast,"×",UDim2.new(1,-35,0,9),UDim2.fromOffset(26,26))
+    local dismiss=button(toast,"×",UDim2.new(1,-27,0,5),UDim2.fromOffset(22,22))
     local leaving=false
     local function dismissToast()
         if leaving or destroyed or not toast.Parent then return end
         leaving=true
         TweenService:Create(toast,TweenInfo.new(0.8,Enum.EasingStyle.Quart,Enum.EasingDirection.InOut),
-            {Position=UDim2.new(1,450,1,-20),GroupTransparency=1}):Play()
+            {Position=UDim2.new(1,350,1,-8),GroupTransparency=1}):Play()
         task.delay(0.8,function() if toast.Parent then toast.Visible=false end end)
     end
     connect(dismiss.Activated,dismissToast)
@@ -1566,10 +1567,10 @@ do
         if destroyed then return end
         loading:Destroy()
         window.Visible=true
-        toastScale.Scale=math.min(1,math.max(0.1,(surface.AbsoluteSize.X-24)/400))
+        toastScale.Scale=math.min(1,math.max(0.1,(surface.AbsoluteSize.X-24)/320))
         toast.Visible=true
         TweenService:Create(toast,TweenInfo.new(0.6,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),
-            {Position=UDim2.new(1,-16,1,-20),GroupTransparency=0}):Play()
+            {Position=UDim2.new(1,-12,1,-8),GroupTransparency=0}):Play()
         TweenService:Create(timer,TweenInfo.new(5,Enum.EasingStyle.Linear),{Size=UDim2.fromScale(0,1)}):Play()
         task.wait(4.2)
         dismissToast()
