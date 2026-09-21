@@ -1,249 +1,364 @@
--- AÑADIR AL FINAL DE HZREYZN HUB CON ANTIFLING INTEGRADO.
--- No ejecutar este bloque por separado.
+-- HzReyzn Hub
+-- Pega las tres partes juntas antes de ejecutar.
 
-do
-    assert(
-        gui and content and antiflingButton and selectTab,
-        "Append this block to HzReyzn Hub with integrated Antifling."
-    )
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 
-    pages[1] = {
-        "Main",
-        "MAIN",
-        "Your controls",
-        "Manage protection and launch your shaders."
-    }
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
-    pages[2] = {
-        "Others scripts",
-        "SCRIPTS (NOT MINE)",
-        "Others scripts",
-        "Tap a script to launch it."
-    }
+for _, name in ipairs({"HzReyznInterface", "HZAntiflingTest"}) do
+    local old = playerGui:FindFirstChild(name)
+    if old then old:Destroy() end
+end
 
-    tabs[1].Text = "Main"
-    tabs[2].Text = "Others scripts"
-    tabs[2].TextSize = 13
+local connections = {}
+local destroyed = false
+local cleanupProtection = function() end
 
-    -- Scroll nativo: permite deslizar con el dedo,
-    -- usar la rueda del mouse y arrastrar la barra.
-    local function scrollingPage(name)
-        local scroll = make("ScrollingFrame", content, {
-            Name = name,
-            Position = UDim2.fromOffset(0, 111),
-            Size = UDim2.fromOffset(498, 151),
+local function connect(signal, callback)
+    local connection = signal:Connect(callback)
+    table.insert(connections, connection)
+    return connection
+end
 
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-
-            CanvasSize = UDim2.fromOffset(0, 0),
-            AutomaticCanvasSize = Enum.AutomaticSize.Y,
-            ScrollingDirection = Enum.ScrollingDirection.Y,
-
-            ScrollBarThickness = 4,
-            ScrollBarImageColor3 = pink,
-            ElasticBehavior = Enum.ElasticBehavior.WhenScrollable,
-
-            Active = true,
-            ClipsDescendants = true,
-            Visible = false,
-        })
-
-        make("UIPadding", scroll, {
-            PaddingTop = UDim.new(0, 4),
-            PaddingBottom = UDim.new(0, 10),
-            PaddingLeft = UDim.new(0, 3),
-            PaddingRight = UDim.new(0, 11),
-        })
-
-        make("UIListLayout", scroll, {
-            SortOrder = Enum.SortOrder.LayoutOrder,
-            Padding = UDim.new(0, 10),
-        })
-
-        return scroll
+local function make(class, parent, properties)
+    local object = Instance.new(class)
+    for key, value in pairs(properties or {}) do
+        object[key] = value
     end
+    object.Parent = parent
+    return object
+end
 
-    local mainScroll = scrollingPage("MainScroll")
-    local othersScroll = scrollingPage("OthersScriptsScroll")
+local function round(object, radius)
+    make("UICorner", object, {
+        CornerRadius = UDim.new(0, radius)
+    })
+end
 
-    -- Mueve el antifling existente: conserva sus funciones y estado.
-    local protectionRow = make("Frame", mainScroll, {
-        Name = "AntiflingRow",
-        LayoutOrder = 1,
-        Size = UDim2.new(1, 0, 0, 96),
+local white = Color3.fromRGB(244, 237, 251)
+local muted = Color3.fromRGB(159, 146, 175)
+local pink = Color3.fromRGB(239, 112, 182)
+local dark = Color3.fromRGB(12, 9, 18)
+local accentColor = pink
+local selectedBackground = Color3.fromRGB(68, 36, 78)
+
+local function label(parent, text, position, size, fontSize, color)
+    return make("TextLabel", parent, {
         BackgroundTransparency = 1,
+        Text = text,
+        Position = position,
+        Size = size,
+        Font = Enum.Font.GothamMedium,
+        TextSize = fontSize,
+        TextColor3 = color or white,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+end
+
+local function button(parent, text, position, size)
+    local object = make("TextButton", parent, {
+        Position = position,
+        Size = size,
+        Text = text,
+        TextColor3 = white,
+        BackgroundColor3 = Color3.fromRGB(31, 23, 40),
+        BackgroundTransparency = 0.12,
+        BorderSizePixel = 0,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 15,
+        AutoButtonColor = true,
+    })
+    round(object, 12)
+    return object
+end
+
+local gui = make("ScreenGui", playerGui, {
+    Name = "HzReyznInterface",
+    ResetOnSpawn = false,
+    DisplayOrder = 30,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+})
+
+connect(gui.Destroying, function()
+    if destroyed then return end
+    destroyed = true
+    cleanupProtection()
+
+    for _, connection in ipairs(connections) do
+        connection:Disconnect()
+    end
+    table.clear(connections)
+end)
+
+local surface = make("Frame", gui, {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundTransparency = 1,
+})
+
+local window = make("Frame", surface, {
+    Name = "Window",
+    Size = UDim2.fromOffset(700, 410),
+    BackgroundColor3 = dark,
+    BackgroundTransparency = 0.08,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+})
+round(window, 20)
+
+local scale = make("UIScale", window, {Scale = 1})
+local gradients = {}
+
+local function gradientBorder(object, thickness, transparency)
+    local stroke = make("UIStroke", object, {
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+        Thickness = thickness,
+        Transparency = transparency,
+        Color = Color3.new(1, 1, 1),
+    })
+    local gradient = make("UIGradient", stroke, {})
+    table.insert(gradients, gradient)
+    return stroke
+end
+
+gradientBorder(window, 2.2, 0.06)
+
+for i = 1, 5 do
+    local inset = 2 + i * 2
+
+    local glow = make("Frame", window, {
+        BackgroundTransparency = 1,
+        ZIndex = 0,
+        Position = UDim2.fromOffset(inset, inset),
+        Size = UDim2.new(1, -inset * 2, 1, -inset * 2),
+    })
+    round(glow, math.max(4, 20 - inset))
+    gradientBorder(glow, 4, 0.56 + i * 0.07)
+end
+
+local accent = make("Frame", window, {
+    Position = UDim2.fromOffset(20, 0),
+    Size = UDim2.new(1, -40, 0, 3),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    BorderSizePixel = 0,
+})
+local accentGradient = make("UIGradient", accent, {})
+
+local header = make("Frame", window, {
+    Size = UDim2.new(1, 0, 0, 64),
+    BackgroundTransparency = 1,
+})
+
+local logo = label(
+    header, "HZ", UDim2.fromOffset(20, 14),
+    UDim2.fromOffset(42, 36), 19, pink
+)
+logo.Font = Enum.Font.GothamBold
+
+label(
+    header, "HzReyzn Hub", UDim2.fromOffset(72, 13),
+    UDim2.fromOffset(360, 23), 19
+)
+label(
+    header, "YOUR SPACE. YOUR STYLE.", UDim2.fromOffset(73, 37),
+    UDim2.fromOffset(350, 16), 10, muted
+)
+
+local minimize = button(
+    header, "HZ", UDim2.new(1, -112, 0, 10),
+    UDim2.fromOffset(44, 44)
+)
+local close = button(
+    header, "×", UDim2.new(1, -60, 0, 10),
+    UDim2.fromOffset(44, 44)
+)
+close.TextSize = 24
+
+local dragArea = make("Frame", header, {
+    Size = UDim2.new(1, -125, 1, 0),
+    BackgroundTransparency = 1,
+    Active = true,
+})
+
+local body = make("Frame", window, {
+    Position = UDim2.fromOffset(0, 64),
+    Size = UDim2.fromOffset(700, 346),
+    BackgroundTransparency = 1,
+})
+
+local sidebar = make("Frame", body, {
+    Position = UDim2.fromOffset(14, 10),
+    Size = UDim2.fromOffset(146, 318),
+    BackgroundColor3 = Color3.fromRGB(22, 16, 30),
+    BackgroundTransparency = 0.15,
+    BorderSizePixel = 0,
+})
+round(sidebar, 15)
+
+label(
+    sidebar, "WORKSPACE", UDim2.fromOffset(16, 16),
+    UDim2.fromOffset(120, 20), 10, muted
+)
+label(
+    sidebar, "HZ / INTERFACE", UDim2.fromOffset(16, 279),
+    UDim2.fromOffset(126, 20), 10, muted
+)
+
+local content = make("Frame", body, {
+    Position = UDim2.fromOffset(180, 10),
+    Size = UDim2.fromOffset(498, 318),
+    BackgroundTransparency = 1,
+})
+
+local eyebrow = label(
+    content, "MAIN", UDim2.fromOffset(0, 4),
+    UDim2.fromOffset(490, 20), 11, pink
+)
+local title = label(
+    content, "Your controls", UDim2.fromOffset(0, 32),
+    UDim2.fromOffset(490, 34), 25
+)
+title.Font = Enum.Font.GothamBold
+
+local description = label(
+    content, "", UDim2.fromOffset(0, 72),
+    UDim2.fromOffset(490, 25), 12, muted
+)
+
+local function scrollingPage(name)
+    local scroll = make("ScrollingFrame", content, {
+        Name = name,
+        Position = UDim2.fromOffset(0, 105),
+        Size = UDim2.fromOffset(498, 207),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        CanvasSize = UDim2.fromOffset(0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ScrollingDirection = Enum.ScrollingDirection.Y,
+        ScrollBarThickness = 4,
+        ScrollBarImageColor3 = pink,
+        ElasticBehavior = Enum.ElasticBehavior.WhenScrollable,
+        ClipsDescendants = true,
+        Active = true,
+        Visible = false,
     })
 
-    antiflingButton.Parent = protectionRow
-    antiflingButton.Position = UDim2.fromOffset(0, 0)
-    antiflingButton.Size = UDim2.new(1, 0, 0, 56)
-
-    antiflingNote.Parent = protectionRow
-    antiflingNote.Position = UDim2.fromOffset(5, 62)
-    antiflingNote.Size = UDim2.new(1, -10, 0, 32)
-    antiflingNote.TextWrapped = true
-
-    -- Crea un botón que ejecuta el script al tocarlo.
-    -- No muestra el código ni la URL dentro del GUI.
-    local function scriptButton(parent, name, url, order)
-        local row = button(
-            parent,
-            "",
-            UDim2.fromOffset(0, 0),
-            UDim2.new(1, 0, 0, 86)
-        )
-
-        row.Name = name
-        row.LayoutOrder = order
-
-        local titleLabel = label(
-            row,
-            name,
-            UDim2.fromOffset(14, 9),
-            UDim2.new(1, -28, 0, 39),
-            15
-        )
-
-        titleLabel.Font = Enum.Font.GothamBold
-        titleLabel.TextWrapped = true
-
-        local stateLabel = label(
-            row,
-            "Tap to execute",
-            UDim2.fromOffset(14, 53),
-            UDim2.new(1, -28, 0, 20),
-            11,
-            muted
-        )
-
-        local busy = false
-
-        local function show(text, color)
-            if not destroyed and row.Parent then
-                stateLabel.Text = text
-                stateLabel.TextColor3 = color or muted
-            end
-        end
-
-        connect(row.Activated, function()
-            if busy or destroyed then return end
-
-            busy = true
-            show("Loading...", pink)
-
-            task.spawn(function()
-                local ok, err = pcall(function()
-                    if type(loadstring) ~= "function" then
-                        error("loadstring is unavailable in this environment.")
-                    end
-
-                    local source = game:HttpGet(url)
-
-                    -- No inicia una descarga terminada después de cerrar el Hub.
-                    if destroyed then return end
-
-                    if type(source) ~= "string"
-                        or source:match("^%s*$") then
-                        error("The URL returned no script.")
-                    end
-
-                    local executable, compileError = loadstring(source)
-
-                    if not executable then
-                        error(compileError or "Invalid Lua source.")
-                    end
-
-                    if destroyed then return end
-
-                    show("Starting...", pink)
-                    executable()
-                end)
-
-                if destroyed then return end
-
-                if ok then
-                    show(
-                        "Executed • Tap to run again",
-                        Color3.fromRGB(158, 219, 185)
-                    )
-                else
-                    show(
-                        "Could not execute • Tap to retry",
-                        Color3.fromRGB(246, 151, 160)
-                    )
-
-                    warn(
-                        "[HzReyzn Hub / " .. name .. "] "
-                        .. tostring(err)
-                    )
-                end
-
-                task.delay(0.75, function()
-                    busy = false
-                end)
-            end)
-        end)
-    end
-
-    -- MAIN
-    scriptButton(
-        mainScroll,
-        "HzReyzn Shaders - The BEST Shaders",
-        "https://raw.githubusercontent.com/hzReyzn/scriptshz/refs/heads/main/HzReyzn%20Shaders",
-        2
-    )
-
-    -- OTHERS SCRIPTS
-    local scripts = {
-        {
-            "Super Ring Parts",
-            "https://raw.githubusercontent.com/WanSeven-W67/Release-Script-/refs/heads/main/Super%20Blackhole%20Nasywan%20W7s"
-        },
-        {
-            "Telekinesis Ui",
-            "https://pastebin.com/raw/VVWcfs9t"
-        },
-        {
-            "Vehicle Fly",
-            "https://raw.githubusercontent.com/willthingVN/script-lua/refs/heads/main/Vehicle%20Fly%20Gui.lua"
-        },
-        {
-            "Kevin DropKick",
-            "https://raw.githubusercontent.com/WithKevinDev/Kevin-Hub-DropKicker/refs/heads/main/main.lua"
-        },
-        {
-            "Six Hub",
-            "https://raw.githubusercontent.com/ySixxNz/Natural-Desastre/Six-Hub/NaturalDisaster"
-        },
-    }
-
-    for index, entry in ipairs(scripts) do
-        scriptButton(
-            othersScroll,
-            entry[1],
-            entry[2],
-            index
-        )
-    end
-
-    -- Mantiene Settings y adapta la navegación existente.
-    local originalSelectTab = selectTab
-
-    selectTab = function(index)
-        originalSelectTab(index)
-
-        card.Visible = false
-        mainScroll.Visible = index == 1
-        othersScroll.Visible = index == 2
-
-        -- Ahora la visibilidad depende del panel padre.
-        antiflingButton.Visible = true
-        antiflingNote.Visible = true
-    end
-
-    selectTab(1)
+    make("UIPadding", scroll, {
+        PaddingTop = UDim.new(0, 4),
+        PaddingBottom = UDim.new(0, 12),
+        PaddingLeft = UDim.new(0, 3),
+        PaddingRight = UDim.new(0, 12),
+    })
+    make("UIListLayout", scroll, {
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Padding = UDim.new(0, 12),
+    })
+    return scroll
 end
+
+local mainScroll = scrollingPage("MainScroll")
+local othersScroll = scrollingPage("OthersScriptsScroll")
+
+local settingsPage = make("Frame", content, {
+    Position = UDim2.fromOffset(0, 110),
+    Size = UDim2.fromOffset(498, 200),
+    BackgroundTransparency = 1,
+    Visible = false,
+})
+
+local animatedColors = true
+local colorButton = button(
+    settingsPage, "Animated colors: ON",
+    UDim2.fromOffset(0, 15), UDim2.fromOffset(310, 48)
+)
+connect(colorButton.Activated, function()
+    animatedColors = not animatedColors
+    colorButton.Text = animatedColors
+        and "Animated colors: ON" or "Animated colors: PAUSED"
+end)
+
+local antiflingEnabled = false
+local protectionRow = make("Frame", mainScroll, {
+    LayoutOrder = 1,
+    Size = UDim2.new(1, 0, 0, 106),
+    BackgroundTransparency = 1,
+})
+
+local antiflingButton = button(
+    protectionRow, "Antifling: OFF",
+    UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 56)
+)
+antiflingButton.Font = Enum.Font.GothamBold
+antiflingButton.TextSize = 17
+
+local antiflingStroke = make("UIStroke", antiflingButton, {
+    ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    Thickness = 1.5,
+    Transparency = 0.5,
+    Color = muted,
+})
+
+local note = label(
+    protectionRow,
+    "Player collision and extreme velocity protection.",
+    UDim2.fromOffset(8, 64),
+    UDim2.new(1, -16, 0, 34),
+    12, muted
+)
+note.TextWrapped = true
+
+local function refreshProtection()
+    antiflingButton.Text = antiflingEnabled
+        and "Antifling: ON" or "Antifling: OFF"
+
+    antiflingButton.TextColor3 = antiflingEnabled and accentColor or muted
+    antiflingButton.BackgroundColor3 = antiflingEnabled
+        and selectedBackground or Color3.fromRGB(31, 23, 40)
+
+    antiflingStroke.Color = antiflingEnabled and accentColor or muted
+    antiflingStroke.Transparency = antiflingEnabled and 0.08 or 0.5
+end
+
+local tabs = {}
+local selectedTab = 1
+local pages = {
+    {"Main", "MAIN", "Your controls", "Manage protection and launch your shaders."},
+    {"Others scripts", "SCRIPTS (NOT MINE)", "Others scripts", "Tap a script to launch it."},
+    {"Settings", "PREFERENCES", "Make it yours", "Customize your interface."},
+}
+
+local function selectTab(index)
+    selectedTab = index
+    mainScroll.Visible = index == 1
+    othersScroll.Visible = index == 2
+    settingsPage.Visible = index == 3
+
+    for i, tab in ipairs(tabs) do
+        tab.BackgroundColor3 = i == index
+            and selectedBackground or Color3.fromRGB(27, 20, 35)
+        tab.TextColor3 = i == index and accentColor or muted
+    end
+
+    local page = pages[index]
+    eyebrow.Text = page[2]
+    title.Text = page[3]
+    description.Text = page[4]
+end
+
+for index, page in ipairs(pages) do
+    local tab = button(
+        sidebar, page[1],
+        UDim2.fromOffset(10, 50 + (index - 1) * 57),
+        UDim2.fromOffset(126, 47)
+    )
+    if index == 2 then tab.TextSize = 13 end
+    tabs[index] = tab
+    connect(tab.Activated, function() selectTab(index) end)
+end
+
+selectTab(1)
 -- Botones para scripts externos.
 
 local function scriptButton(parent, name, url, order)
