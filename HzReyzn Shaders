@@ -55,6 +55,7 @@ local S = {
 local connections, created, parked = {}, {}, {}
 local savedEffects, saved = {}, {}
 local objects, flakes, ripples, puddles, lenses = {}, {}, {}, {}, {}
+local snowGround = {}
 local cleanup = function() end
 
 local function connect(signal, fn)
@@ -126,7 +127,7 @@ local lensLayer = make("Frame", surface, {
     ClipsDescendants = true,
 })
 local panel = make("Frame", surface, {
-    Size = UDim2.fromOffset(310, 350),
+    Size = UDim2.fromOffset(310, 314),
     BackgroundColor3 = RGB(17, 18, 29),
     BackgroundTransparency = 0.08,
     BorderSizePixel = 0,
@@ -166,6 +167,13 @@ local function button(parent, text, x, y, w, h)
         BorderSizePixel = 0,
     })
     round(o, 11)
+    make("UIGradient", o, {
+        Color=ColorSequence.new(RGB(255,255,255),RGB(164,179,216)), Rotation=35,
+    })
+    make("UIStroke", o, {
+        Name="OptionEdge", ApplyStrokeMode=Enum.ApplyStrokeMode.Border,
+        Color=RGB(154,142,221), Thickness=1, Transparency=0.65,
+    })
     return o
 end
 
@@ -203,16 +211,6 @@ local realButton = button(panel, "Real Time: OFF", 15, 213, 280, 37)
 local backButton = button(panel, "Restore shader", 15, 261, 136, 37)
 local defaultButton = button(panel, "Default", 159, 261, 136, 37)
 
-local info = make("TextLabel", panel, {
-    Text = "Default • Choose a shader",
-    Position = UDim2.fromOffset(15, 309),
-    Size = UDim2.fromOffset(280, 27),
-    BackgroundTransparency = 1,
-    Font = Enum.Font.GothamMedium,
-    TextSize = 11,
-    TextColor3 = RGB(171, 166, 190),
-})
-
 local launcher = button(surface, "HZ", 20, 85, 58, 58)
 launcher.Visible = false
 launcher.ZIndex = 5
@@ -222,6 +220,10 @@ local launcherGradient = border(launcher)
 
 local function refreshUI()
     for name, b in pairs(buttons) do
+        local edge=b:FindFirstChild("OptionEdge")
+        edge.Transparency=name==S.active and 0.05 or 0.65
+        edge.Thickness=name==S.active and 1.8 or 1
+        edge.Color=name==S.active and RGB(242,156,222) or RGB(154,142,221)
         b.BackgroundColor3 = name == S.active
             and RGB(76, 43, 97) or RGB(35, 29, 48)
 
@@ -232,11 +234,7 @@ local function refreshUI()
     realButton.Text = S.real and "Real Time: ON" or "Real Time: OFF"
     backButton.TextTransparency = S.previous and 0 or 0.6
 
-    info.Text = not S.active and "Default • Choose a shader"
-        or (S.active .. (S.real and " • Real Time" or "")
-        .. (weather(S.active)
-            and (S.previous and " • Restore available" or "")
-            or " • Weather chance: 1% / 5s"))
+
 end
 local BASE = {
     L = {
@@ -459,6 +457,7 @@ local function clearVisuals()
     table.clear(ripples)
     table.clear(puddles)
     table.clear(lenses)
+    table.clear(snowGround)
 end
 
 local function restoreEnvironment()
@@ -657,13 +656,14 @@ local function initVisuals(name)
                 Adornee = p,
                 Size = UDim2.fromScale(0.2, 0.2),
                 AlwaysOnTop = false,
-                LightInfluence = 0.3,
+                LightInfluence = 0,
                 MaxDistance = 85,
                 Enabled = false,
             })
             item.Shape, item.Lines = snowShape(item.Gui)
         else
-            p.Size = Vector3.new(0.025, 0.025, 1.35)
+            p.Size = Vector3.new(0.045, 0.045, 1.6)
+            p.Material = Enum.Material.Neon
             p.Color = RGB(195, 215, 234)
         end
 
@@ -703,7 +703,18 @@ local function initVisuals(name)
         table.insert(lenses, item)
     end
 
-    if snow then return end
+    if snow then
+        for i = 1, 48 do
+            local p = visualPart("SettledSnow")
+            local g = make("SurfaceGui", p, {
+                Face = Enum.NormalId.Top, CanvasSize = Vector2.new(64,64),
+                AlwaysOnTop = false, LightInfluence = 0, Enabled = false,
+            })
+            local shape, lines = snowShape(g)
+            table.insert(snowGround, {Part=p, Gui=g, Lines=lines, Active=false})
+        end
+        return
+    end
 
     for i = 1, CFG.PuddleLimit do
         local p = visualPart("RainPuddle")
@@ -722,7 +733,7 @@ local function initVisuals(name)
             Face = Enum.NormalId.Top,
             CanvasSize = Vector2.new(100, 100),
             AlwaysOnTop = false,
-            LightInfluence = 0.6,
+            LightInfluence = 0,
             Enabled = false,
         })
 
@@ -734,7 +745,7 @@ local function initVisuals(name)
         round(f, 50)
 
         local stroke = make("UIStroke", f, {
-            Thickness = 1.3,
+            Thickness = 2,
             Color = RGB(198, 220, 235),
             Transparency = 1,
         })
@@ -743,8 +754,10 @@ local function initVisuals(name)
             Part = p, Gui = g, Stroke = stroke, Age = 1,
         })
     end
+end
+
 local function stable(hit)
-    if not hit or hit.Normal.Y < 0.985
+    if not hit or hit.Normal.Y < 0.7
         or hit.Material == Enum.Material.Water then
         return false
     end
@@ -760,7 +773,22 @@ local function impact(hit)
     local tangent = Vector3.new(1, 0, 0)
     tangent = (tangent - n * tangent:Dot(n)).Unit
 
-    if rng:NextNumber() < 0.35 then
+    if S.active == "Snowfall" then
+        local slot
+        for _, f in ipairs(snowGround) do
+            if not f.Active then slot=f; break end
+        end
+        if not slot then return end
+        slot.Active=true; slot.Born=S.time; slot.Support=hit.Instance
+        local size=rng:NextNumber(0.35,0.75)
+        slot.Part.Size=Vector3.new(size,0.02,size)
+        slot.Part.CFrame=CFrame.fromMatrix(hit.Position+n*0.035,tangent,n,tangent:Cross(n))
+        slot.Gui.Enabled=true
+        opacity(slot.Lines,0.9)
+        return
+    end
+
+    if rng:NextNumber() < 0.65 then
         for _, r in ipairs(ripples) do
             if r.Age >= 0.65 then
                 r.Age = 0
@@ -776,7 +804,7 @@ local function impact(hit)
         end
     end
 
-    if S.intensity < 0.35 or rng:NextNumber() > 0.035 then return end
+    if S.intensity < 0.35 or rng:NextNumber() > 0.1 then return end
 
     local slot
     for _, p in ipairs(puddles) do
@@ -836,7 +864,7 @@ local function spawnFlake(camera)
 
     local origin = camera.CFrame.Position + Vector3.new(
         math.cos(angle) * radius,
-        snow and rng:NextNumber(9, 19) or rng:NextNumber(15, 24),
+        snow and rng:NextNumber(3, 12) or rng:NextNumber(10, 20),
         math.sin(angle) * radius
     )
 
@@ -858,7 +886,7 @@ local function spawnFlake(camera)
         slot.Sway = rng:NextNumber(0.35, 1.1)
         slot.Spin = rng:NextNumber(-45, 45)
 
-        local size = rng:NextNumber(0.12, 0.26)
+        local size = rng:NextNumber(0.25, 0.45)
         slot.Gui.Size = UDim2.fromScale(size, size)
         slot.Gui.Enabled = true
         opacity(slot.Lines, 0)
@@ -882,7 +910,7 @@ local function spawnLens()
             f.Spin = rng:NextNumber(-20, 20)
 
             local size = rng:NextInteger(
-                4, S.active == "Snowfall" and 12 or 8
+                8, S.active == "Snowfall" and 18 or 12
             )
             f.Frame.Size = UDim2.fromOffset(size, size * 1.15)
             f.Frame.Position = UDim2.fromScale(f.X, f.Y)
@@ -892,7 +920,6 @@ local function spawnLens()
     end
 end
 
-end
 local function updateVisuals(dt, camera)
     local snow = S.active == "Snowfall"
 
@@ -922,7 +949,9 @@ local function updateVisuals(dt, camera)
                     local travel = pos - f.Last
 
                     if travel.Magnitude > 0 then
-                        remove = workspace:Raycast(f.Last, travel, params) ~= nil
+                        local hit = workspace:Raycast(f.Last, travel, params)
+                        remove = hit ~= nil
+                        if hit then impact(hit) end
                     end
                     f.Last = pos
                 end
@@ -956,6 +985,19 @@ local function updateVisuals(dt, camera)
         end
     end
 
+    for _, f in ipairs(snowGround) do
+        if f.Active then
+            local age=S.time-f.Born
+            local expired=age>=12 or not f.Support.Parent
+                or (f.Part.Position-camera.CFrame.Position).Magnitude>90
+            if expired then
+                f.Active=false; f.Gui.Enabled=false
+            else
+                opacity(f.Lines,0.9*math.clamp((12-age)/3,0,1))
+            end
+        end
+    end
+
     for _, r in ipairs(ripples) do
         if r.Age < 0.65 then
             r.Age = r.Age + dt
@@ -964,7 +1006,7 @@ local function updateVisuals(dt, camera)
             local size = 0.2 + a * 1.7
 
             r.Part.Size = Vector3.new(size, 0.02, size)
-            r.Stroke.Transparency = 0.45 + a * 0.55
+            r.Stroke.Transparency = 0.2 + a * 0.8
 
             if a >= 1 then r.Gui.Enabled = false end
         end
@@ -1010,11 +1052,11 @@ local function updateVisuals(dt, camera)
 
             if snow then
                 f.Shape.Rotation = f.Age * f.Spin
-                opacity(f.Lines, a * 0.55)
+                opacity(f.Lines, a * 0.85)
             else
                 f.Frame.BackgroundColor3 = RGB(139, 170, 190)
-                f.Frame.BackgroundTransparency = 1 - a * 0.09
-                f.Stroke.Transparency = 1 - a * 0.4
+                f.Frame.BackgroundTransparency = 1 - a * 0.18
+                f.Stroke.Transparency = 1 - a * 0.7
             end
 
             if f.Age >= f.Life then
@@ -1100,7 +1142,9 @@ local function setMode(name, resume)
     refreshUI()
 
     if not ok then
-        info.Text = "Could not activate shader"
+        heading.Text = "Shader unavailable • Retry"
+    else
+        heading.Text = "HzReyzn Shaders"
     end
 end
 
@@ -1225,9 +1269,7 @@ connect(RunService.Heartbeat, function(rawDt)
     local duration = S.active == "Rain"
         and CFG.RainArrival or CFG.SnowArrival
 
-    S.intensity = smooth(
-        (math.clamp(S.age / duration, 0, 1) - 0.2) / 0.8
-    )
+    S.intensity = smooth(S.age / 2.5)
 
     local camera = workspace.CurrentCamera
     if not camera then return end
@@ -1258,7 +1300,7 @@ connect(RunService.Heartbeat, function(rawDt)
     end
 
     if outdoors and S.intensity > 0.1 then
-        lensBudget = lensBudget + dt * 2.4 * S.intensity
+        lensBudget = lensBudget + dt * 4 * S.intensity
 
         if lensBudget >= 1 then
             lensBudget = lensBudget - 1
@@ -1283,7 +1325,7 @@ local function clampPanel(x, y)
 
     panel.Position = UDim2.fromOffset(
         math.clamp(x, 5, math.max(5, size.X - 310 * scale.Scale - 5)),
-        math.clamp(y, 5, math.max(5, size.Y - 350 * scale.Scale - 5))
+        math.clamp(y, 5, math.max(5, size.Y - 314 * scale.Scale - 5))
     )
 end
 
@@ -1301,13 +1343,13 @@ local function resize(center)
     if size.X < 1 or size.Y < 1 then return end
 
     scale.Scale = math.max(0.05, math.min(
-        1, (size.X - 20) / 310, (size.Y - 20) / 350
+        1, (size.X - 20) / 310, (size.Y - 20) / 314
     ))
 
     if center then
         clampPanel(
             (size.X - 310 * scale.Scale) / 2,
-            (size.Y - 350 * scale.Scale) / 2
+            (size.Y - 314 * scale.Scale) / 2
         )
     else
         clampPanel(panel.Position.X.Offset, panel.Position.Y.Offset)
@@ -1373,7 +1415,6 @@ local function draggable(handle, target, clamp, onTap)
         end
     end)
 
--- La función continúa en la parte 12.
     connect(UIS.InputEnded, function(input)
         if input ~= held then return end
 
@@ -1426,3 +1467,4 @@ task.defer(function()
         resize(true)
     end
 end)
+
