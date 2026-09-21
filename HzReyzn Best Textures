@@ -26,19 +26,14 @@ local function reportError(message)
     end)
 end
 local startupOK, startupError = xpcall(function()
--- HzReyzn Best Textures | client-side material detail and surface footsteps.
--- Studio: LocalScript in StarterPlayerScripts. No server remotes required.
--- Official texture IDs: https://create.roblox.com/docs/parts/materials
--- Native Glass, Neon, ForceField and existing custom appearances are preserved.
--- Footsteps use processed built-in audio; set SoundIds to permitted recordings
--- for authentic individual samples. This does not upscale existing image assets.
+-- HzReyzn Best Textures | color-preserving material detail, water and sky.
+-- Uses normal/roughness maps, never changes BasePart.Color or Material.
+-- Special shaders and existing custom color textures are preserved.
 local CONFIG = {
     Radius = 500,
     BatchSize = 90,
     ScanInterval = 0.10,
     TileSize = 8,
-    Volume = 0.32,
-    SoundIds = {}, -- e.g. Metal = "rbxassetid://YOUR_AUTHORIZED_AUDIO_ID"
 }
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -50,7 +45,10 @@ local pg = player:WaitForChild("PlayerGui", 15)
 if not pg then error("PlayerGui was not available after 15 seconds.") end
 local old = pg:FindFirstChild("HZBestTextures")
 if old then old:Destroy() end
-local alive, enabled, footsteps = true, true, true
+local alive, enabled = true, true
+local Lighting = game:GetService("Lighting")
+local terrain = workspace.Terrain
+local waterEnabled, skyEnabled = false, false
 local connections, variants, originals = {}, {}, {}
 local parts, indices, cursor = {}, {}, 1
 local materialByName = {}
@@ -114,18 +112,11 @@ local MAPS = {
     Wood = {"9920625290", "9439641376", "", "9439648605"},
     WoodPlanks = {"9920626778", "9439650689", "", "9439658127"},
 }
-local reserved = {Glass=true, Neon=true, ForceField=true, Plastic=true, SmoothPlastic=true}
+local reserved = {Glass=true, Neon=true, ForceField=true}
+-- Plastic keeps a smooth surface, with a fine roughness map only.
+MAPS.Plastic = {"", "", "", MAPS.Rubber[4]}
+MAPS.SmoothPlastic = {"", "", "", MAPS.Rubber[4]}
 local token = tostring(math.floor(os.clock() * 1000000))
-local aliases = {
-    wooden="Wood", timber="Wood", trunk="Wood", bark="Wood", plank="WoodPlanks", planks="WoodPlanks",
-    steel="Metal", iron="Metal", aluminum="Metal", aluminium="Metal", metallic="Metal",
-    window="Glass", windows="Glass", glass="Glass", cristal="Glass", vidrio="Glass",
-    wall="Concrete", walls="Concrete", pared="Concrete", floor="Concrete", suelo="Concrete",
-    pavement="Pavement", sidewalk="Pavement", road="Asphalt", roof="RoofShingles",
-    dirt="Ground", soil="Ground", lawn="Grass", leaves="LeafyGrass", foliage="LeafyGrass",
-    stone="Rock", rocks="Rock", carpet="Carpet", tile="CeramicTiles", tiles="CeramicTiles",
-    madera="Wood", metalico="Metal", piso="Concrete",
-}
 local function characterPart(part)
     local p = part.Parent
     while p and p ~= workspace do
@@ -135,30 +126,6 @@ local function characterPart(part)
     end
     return false
 end
-local function namedMaterial(part)
-    local explicit = part:GetAttribute("HZMaterial")
-    if type(explicit) == "string" and materialByName[explicit:lower()] then
-        return materialByName[explicit:lower()]
-    end
-    -- Infer only bland default materials, never replace a real wood/metal/etc material.
-    if part.Material ~= Enum.Material.Plastic and part.Material ~= Enum.Material.SmoothPlastic then
-        return part.Material
-    end
-    local text = part.Name:gsub("(%l)(%u)", "%1 %2"):lower()
-    local whole = materialByName[text:gsub("[%s_%-]", "")]
-    if whole then return whole end
-    local fallback
-    for word in text:gmatch("%a+") do
-        local name = aliases[word]
-        local m = materialByName[word] or (name and materialByName[name:lower()])
-        if m then
-            if word == "wall" or word == "walls" or word == "floor" or word == "piso" or word == "pared" then
-                fallback = m
-            else return m end
-        end
-    end
-    return fallback or part.Material
-end
 local function restore(part)
     local state = originals[part]
     if not state then return end
@@ -166,22 +133,20 @@ local function restore(part)
         pcall(function()
             -- Avoid overwriting a newer material applied by the game.
             if part.MaterialVariant == state.appliedVariant and part.Material == state.appliedMaterial then
-                part.Material = state.material
                 part.MaterialVariant = state.variant
                 part.Reflectance = state.reflectance
-                part.CustomPhysicalProperties = state.physics
             end
         end)
     end
     originals[part] = nil
 end
 local function apply(part)
-    if originals[part] or not part.Anchored or part.Transparency >= 0.98 or characterPart(part) then return end
+    if originals[part] or part.Transparency >= 0.98 or characterPart(part) then return end
     if part.MaterialVariant ~= "" or part:FindFirstChildOfClass("SurfaceAppearance") then return end
     if part:FindFirstChildOfClass("Texture") or part:FindFirstChildOfClass("Decal")
         or part:FindFirstChildOfClass("SpecialMesh") then return end
     if part:IsA("MeshPart") and part.TextureID ~= "" then return end
-    local mat = namedMaterial(part)
+    local mat = part.Material
     local variant = variants[mat.Name]
     local glass = mat == Enum.Material.Glass
     if not variant and not glass and mat == part.Material then return end
@@ -190,16 +155,13 @@ local function apply(part)
         appliedMaterial=mat, appliedVariant=variant and variant.Name or ""}
     originals[part] = state
     local ok = pcall(function()
-        -- Freeze original physical properties before a visual material substitution.
-        part.CustomPhysicalProperties = part.CurrentPhysicalProperties
-        part.Material = mat
         part.MaterialVariant = state.appliedVariant
         if glass then part.Reflectance = math.max(part.Reflectance, 0.12) end
     end)
     if not ok then
         pcall(function()
-            part.Material=state.material; part.MaterialVariant=state.variant
-            part.Reflectance=state.reflectance; part.CustomPhysicalProperties=state.physics
+            part.MaterialVariant=state.variant
+            part.Reflectance=state.reflectance
         end)
         originals[part] = nil
     end
@@ -227,7 +189,7 @@ task.spawn(function()
     end
 end)
 local gui = make("ScreenGui", pg, {Name="HZBestTextures", ResetOnSpawn=false, DisplayOrder=32})
-local frame = make("Frame", gui, {Size=UDim2.fromOffset(300,190), Position=UDim2.new(0.5,-150,0.15,0),
+local frame = make("Frame", gui, {Size=UDim2.fromOffset(300,236), Position=UDim2.new(0.5,-150,0.15,0),
     BackgroundColor3=Color3.fromRGB(8,20,36), BorderSizePixel=0})
 corner(frame,14)
 make("UIStroke",frame,{Color=Color3.fromRGB(75,215,235),Thickness=1.5})
@@ -243,24 +205,115 @@ end
 local close=uiButton("×",262,5,30)
 local mini=uiButton("−",228,5,30)
 local textureButton=uiButton("Textures: ON",12,52,276)
-local soundButton=uiButton("Surface footsteps: ON",12,94,276)
-local status=make("TextLabel",frame,{Text="Loading material details...",Position=UDim2.fromOffset(12,139),Size=UDim2.fromOffset(276,40),
+local waterButton=uiButton("Water: OFF",12,94,276)
+local skyButton=uiButton("Sky & clouds: OFF",12,136,276)
+local status=make("TextLabel",frame,{Text="Loading material details...",Position=UDim2.fromOffset(12,181),Size=UDim2.fromOffset(276,40),
     BackgroundTransparency=1,TextColor3=Color3.fromRGB(174,203,214),TextSize=11,TextWrapped=true,Font=Enum.Font.GothamMedium})
+
+-- All environment changes are reversible; never write WaterColor or terrain material colors.
+local waterOriginal = {}
+local waterSettings = {WaterWaveSize=0.18, WaterWaveSpeed=8, WaterReflectance=0.65, WaterTransparency=0.3}
+local function setWater(on)
+    if on == waterEnabled then return end
+    if on then
+        for k,v in pairs(waterSettings) do
+            waterOriginal[k] = terrain[k]
+            terrain[k] = v
+        end
+    else
+        for k,v in pairs(waterOriginal) do
+            if terrain[k] == waterSettings[k] then terrain[k] = v end
+        end
+        table.clear(waterOriginal)
+    end
+    waterEnabled = on
+    waterButton.Text = on and "Water: ON" or "Water: OFF"
+end
+local savedSkies, savedClouds = {}, {}
+local ownSky, ownClouds, oldWind
+local wind = Vector3.new(4, 0, 2)
+local function setSky(on)
+    if on == skyEnabled then return end
+    if on then
+        skyEnabled = true -- Allows cleanup even if an environment property is unavailable.
+        for _,o in ipairs(Lighting:GetChildren()) do
+            if o:IsA("Sky") then savedSkies[#savedSkies+1]=o; o.Parent=nil end
+        end
+        for _,o in ipairs(terrain:GetChildren()) do
+            if o:IsA("Clouds") then savedClouds[#savedClouds+1]=o; o.Parent=nil end
+        end
+        ownSky = make("Sky", Lighting, {
+            Name="HZClearSky", CelestialBodiesShown=true,
+            SunAngularSize=11, MoonAngularSize=10, StarCount=1800,
+            SkyboxBk="rbxasset://textures/sky/sky512_bk.tex",
+            SkyboxDn="rbxasset://textures/sky/sky512_dn.tex",
+            SkyboxFt="rbxasset://textures/sky/sky512_ft.tex",
+            SkyboxLf="rbxasset://textures/sky/sky512_lf.tex",
+            SkyboxRt="rbxasset://textures/sky/sky512_rt.tex",
+            SkyboxUp="rbxasset://textures/sky/sky512_up.tex",
+        })
+        ownClouds = make("Clouds", terrain, {
+            Name="HZSoftClouds", Cover=0.55, Density=0.32,
+            Color=Color3.new(1,1,1), Enabled=true,
+        })
+        oldWind = workspace.GlobalWind
+        workspace.GlobalWind = wind
+    else
+        if ownSky then ownSky:Destroy(); ownSky=nil end
+        if ownClouds then ownClouds:Destroy(); ownClouds=nil end
+        for _,o in ipairs(savedSkies) do pcall(function() if not o.Parent then o.Parent=Lighting end end) end
+        for _,o in ipairs(savedClouds) do pcall(function() if not o.Parent then o.Parent=terrain end end) end
+        table.clear(savedSkies); table.clear(savedClouds)
+        if oldWind and workspace.GlobalWind == wind then workspace.GlobalWind=oldWind end
+        oldWind=nil
+    end
+    skyEnabled=on
+    skyButton.Text=on and "Sky & clouds: ON" or "Sky & clouds: OFF"
+end
+local terrainOverrides = {}
+local function terrainDetails(on)
+    for name,variant in pairs(variants) do
+        local material = materialByName[name:lower()]
+        pcall(function()
+            if on then
+                if terrainOverrides[material] == nil then
+                    local original = MaterialService:GetBaseMaterialOverride(material)
+                    -- Existing custom terrain colors/maps remain untouched.
+                    if original == "" then
+                        MaterialService:SetBaseMaterialOverride(material, variant.Name)
+                        terrainOverrides[material] = {old=original, applied=variant.Name}
+                    end
+                end
+            else
+                local saved = terrainOverrides[material]
+                if saved and MaterialService:GetBaseMaterialOverride(material) == saved.applied then
+                    MaterialService:SetBaseMaterialOverride(material, saved.old)
+                end
+                terrainOverrides[material]=nil
+            end
+        end)
+    end
+end
+connect(waterButton.Activated,function() setWater(not waterEnabled) end)
+connect(skyButton.Activated,function() setSky(not skyEnabled) end)
+
 -- Build detail assets only after the controls are visible.
 task.defer(function()
     if not alive then return end
 for name, maps in pairs(MAPS) do
     local material = materialByName[name:lower()]
-    if material and maps[1] ~= "" and not reserved[name] then
+    if material and (maps[2] ~= "" or maps[4] ~= "") and not reserved[name] then
         local variant
         local ok = pcall(function()
             variant = Instance.new("MaterialVariant")
             variant.Name = "HZDetail_" .. token .. "_" .. name
             variant.BaseMaterial = material
             variant.StudsPerTile = (name == "Brick" or name == "WoodPlanks") and 6 or CONFIG.TileSize
-            for i, property in ipairs({"ColorMap", "NormalMap", "MetalnessMap", "RoughnessMap"}) do
-                if maps[i] ~= "" then variant[property] = "rbxassetid://" .. maps[i] end
-            end
+            -- A blank albedo map keeps the part's base tint; only surface detail is added.
+            variant.ColorMap = ""
+            if maps[2] ~= "" then variant.NormalMap = "rbxassetid://" .. maps[2] end
+            if maps[3] ~= "" then variant.MetalnessMap = "rbxassetid://" .. maps[3] end
+            if maps[4] ~= "" then variant.RoughnessMap = "rbxassetid://" .. maps[4] end
             variant.Parent = MaterialService
         end)
         if ok then variants[name] = variant
@@ -268,17 +321,18 @@ for name, maps in pairs(MAPS) do
     end
 end
 
+    if enabled then terrainDetails(true) end
     local count = 0
     for _ in pairs(variants) do count = count + 1 end
     if count == 0 then
-        warn("[HZ Textures] Custom materials unavailable; using native material detection.")
+        warn("[HZ Textures] Custom detail maps unavailable; keeping native materials.")
     end
 end)
 local minimized=false
 connect(mini.Activated,function()
     minimized=not minimized
-    textureButton.Visible=not minimized; soundButton.Visible=not minimized; status.Visible=not minimized
-    frame.Size=UDim2.fromOffset(300,minimized and 46 or 190);mini.Text=minimized and "+" or "−"
+    textureButton.Visible=not minimized; waterButton.Visible=not minimized; skyButton.Visible=not minimized; status.Visible=not minimized
+    frame.Size=UDim2.fromOffset(300,minimized and 46 or 236);mini.Text=minimized and "+" or "−"
 end)
 local held,startPoint,startPosition
 connect(title.InputBegan,function(input)
@@ -289,7 +343,7 @@ end)
 local function clampPanel(x,y)
     local view=workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800,600)
     frame.Position=UDim2.fromOffset(math.clamp(x,0,math.max(0,view.X-300*uiScale.Scale)),
-        math.clamp(y,0,math.max(0,view.Y-230*uiScale.Scale)))
+        math.clamp(y,0,math.max(0,view.Y-270*uiScale.Scale)))
 end
 connect(UIS.InputChanged,function(input)
     if held and (input==held or (held.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseMovement)) then
@@ -302,56 +356,15 @@ connect(UIS.InputEnded,function(input) if input==held then held=nil end end)
 connect(UIS.WindowFocusReleased,function() held=nil end)
 connect(textureButton.Activated,function()
     enabled=not enabled;textureButton.Text=enabled and "Textures: ON" or "Textures: OFF"
+    terrainDetails(enabled)
     if not enabled then for p in pairs(originals) do restore(p) end end
 end)
--- Every current Enum.Material receives a profile; unknown future materials use Hard.
-local groups={}
-local function group(name,names) for word in names:gmatch("%S+") do groups[word]=name end end
-group("Metal","Metal CorrodedMetal DiamondPlate Foil")
-group("Wood","Wood WoodPlanks Cardboard")
-group("Soft","Fabric Carpet Leather Rubber")
-group("Grass","Grass LeafyGrass")
-group("Loose","Sand Salt Snow Ground Mud Pebble")
-group("Glass","Glass Ice Glacier")
-group("Water","Water")
-local profiles={
-    Hard={1.0,0,-2,0,0.04}, Metal={1.18,-8,2,7,0.20}, Wood={0.83,5,-2,-6,0.07},
-    Soft={0.86,-3,-9,-18,0}, Grass={1.07,-4,-2,-9,0}, Loose={0.91,-2,-1,-6,0},
-    Glass={1.30,-10,1,6,0.12}, Water={0.90,0,-3,-6,0.04},
-}
-local byMaterial={}
-for _,m in ipairs(Enum.Material:GetEnumItems()) do byMaterial[m]=groups[m.Name] or "Hard" end
-local stepSound,eq,reverb,root,humanoid,character
-local mutedRunning={}
-local function unmute()
-    for s,v in pairs(mutedRunning) do if s.Parent then s.Volume=v end end
-    table.clear(mutedRunning)
-end
-local function clearSound()
-    unmute()
-    if stepSound then stepSound:Destroy() end
-    stepSound=nil
-end
-local function bind(model)
-    clearSound();character=model;root=nil;humanoid=nil
-end
-connect(player.CharacterAdded,bind)
-connect(player.CharacterRemoving,function(model) if model==character then bind(nil) end end)
-bind(player.Character)
-connect(soundButton.Activated,function()
-    footsteps=not footsteps;soundButton.Text=footsteps and "Surface footsteps: ON" or "Surface footsteps: OFF"
-    if not footsteps then unmute();if stepSound then stepSound:Stop() end end
-end)
-local rayParams=RaycastParams.new()
-rayParams.FilterType=Enum.RaycastFilterType.Exclude
-pcall(function() rayParams.RespectCanCollide=true end)
-local scanClock,stepClock,uiClock=0,0,0
-local lastSurface="None"
+local scanClock,uiClock=0,0
+local root
 connect(RunService.Heartbeat,function(dt)
     if not alive then return end
-    if character and character.Parent then
-        root=character:FindFirstChild("HumanoidRootPart");humanoid=character:FindFirstChildOfClass("Humanoid")
-    else root=nil;humanoid=nil end
+    local character = player.Character
+    root = character and character:FindFirstChild("HumanoidRootPart")
     scanClock=scanClock+dt;uiClock=uiClock+dt
     if scanClock>=CONFIG.ScanInterval then
         scanClock=0
@@ -371,63 +384,31 @@ connect(RunService.Heartbeat,function(dt)
     if uiClock>=1 then
         uiClock=0
         local n=0;for _ in pairs(originals) do n=n+1 end
-        status.Text=string.format("%d detailed parts  •  %d studs\nSurface: %s",n,CONFIG.Radius,lastSurface)
+        status.Text=string.format("%d detailed parts  •  %d studs\nOriginal base colors preserved",n,CONFIG.Radius)
         local camera=workspace.CurrentCamera
-        if camera then uiScale.Scale=math.min(1,(camera.ViewportSize.X-20)/300,(camera.ViewportSize.Y-50)/190) end
+        if camera then uiScale.Scale=math.min(1,(camera.ViewportSize.X-20)/300,(camera.ViewportSize.Y-50)/236) end
     end
-    local walking=footsteps and root and humanoid and humanoid.Health>0 and not humanoid.SeatPart
-        and humanoid.FloorMaterial~=Enum.Material.Air and humanoid.MoveDirection.Magnitude>0.05
-        and humanoid:GetState()~=Enum.HumanoidStateType.Swimming
-        and humanoid:GetState()~=Enum.HumanoidStateType.Climbing
-    if not walking then
-        stepClock=0;unmute();if stepSound then stepSound:Stop() end;return
-    end
-    if not stepSound or stepSound.Parent~=root then
-        clearSound()
-        stepSound=make("Sound",root,{Name="HZSurfaceStep",SoundId="rbxasset://sounds/action_footsteps_plastic.mp3",
-            Volume=CONFIG.Volume,Looped=false,RollOffMaxDistance=30})
-        eq=make("EqualizerSoundEffect",stepSound,{})
-        reverb=make("ReverbSoundEffect",stepSound,{DecayTime=0.3,Density=0.3,Diffusion=0.4,WetLevel=-25})
-    end
-    -- Only suppress legacy default footsteps after the replacement has loaded.
-    if stepSound.IsLoaded then
-        local running=root:FindFirstChild("Running")
-        if running and running:IsA("Sound") then
-            if mutedRunning[running]==nil then mutedRunning[running]=running.Volume end
-            running.Volume=0
-        end
-    else unmute() end
-    stepClock=stepClock+dt
-    local speed=Vector3.new(root.AssemblyLinearVelocity.X,0,root.AssemblyLinearVelocity.Z).Magnitude
-    if speed<1 then return end
-    local interval=math.clamp(5/math.max(speed,1),0.19,0.65)
-    if stepClock<interval then return end
-    stepClock=0
-    rayParams.FilterDescendantsInstances={character}
-    local hit=workspace:Raycast(root.Position,Vector3.new(0,-(humanoid.HipHeight+root.Size.Y*0.5+4),0),rayParams)
-    local mat=hit and hit.Material or humanoid.FloorMaterial
-    if hit and hit.Instance:IsA("BasePart") and not hit.Instance:IsA("Terrain") then mat=namedMaterial(hit.Instance) end
-    lastSurface=mat.Name
-    local category=byMaterial[mat] or "Hard"
-    local p=profiles[category]
-    local id=CONFIG.SoundIds[mat.Name] or CONFIG.SoundIds[category] or "rbxasset://sounds/action_footsteps_plastic.mp3"
-    if stepSound.SoundId~=id then stepSound:Stop();stepSound.SoundId=id end
-    stepSound.PlaybackSpeed=p[1]*(0.96+math.random()*0.08)
-    stepSound.Volume=CONFIG.Volume*(category=="Soft" and 0.55 or 1)
-    eq.LowGain=p[2];eq.MidGain=p[3];eq.HighGain=p[4]
-    reverb.WetLevel=p[5]>0 and (-30+p[5]*60) or -80
-    stepSound.TimePosition=0;stepSound:Play()
+
 end)
 connect(gui.Destroying,function()
     if not alive then return end
     alive=false
     for _,c in ipairs(connections) do c:Disconnect() end
-    clearSound()
     for p in pairs(originals) do restore(p) end
+    terrainDetails(false)
+    setWater(false)
+    setSky(false)
     for _,v in pairs(variants) do v:Destroy() end
     table.clear(parts);table.clear(indices)
 end)
 connect(close.Activated,function() gui:Destroy() end)
+setWater(true)
+local skyOK, skyError = pcall(function() setSky(true) end)
+if not skyOK then
+    pcall(function() setSky(false) end)
+    skyButton.Text = "Sky unavailable"
+    warn("[HZ Textures / Sky] " .. tostring(skyError))
+end
 
 end, function(err) return debug.traceback(tostring(err), 2) end)
 if not startupOK then reportError(startupError) end
