@@ -17,7 +17,7 @@ local CFG = {
     RainArrival = 18,
     SnowArrival = 16,
 
-    Radius = 24,
+    Radius = 100,
     RainLimit = 120,
     SnowLimit = 140,
     RainRate = 150,
@@ -644,6 +644,20 @@ local function opacity(lines, value)
     end
 end
 
+-- The weather footprint follows the character, independently of camera zoom.
+local function weatherCenter()
+    local character = Players.LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if root then return root.Position end
+    local camera = workspace.CurrentCamera
+    return camera and camera.CFrame.Position or Vector3.new(0,0,0)
+end
+
+local function inWeatherRadius(position, center)
+    local dx, dz = position.X-center.X, position.Z-center.Z
+    return dx*dx + dz*dz <= CFG.Radius*CFG.Radius
+end
+
 local function initVisuals(name)
     local snow = name == "Snowfall"
 
@@ -657,14 +671,26 @@ local function initVisuals(name)
                 Size = UDim2.fromScale(0.2, 0.2),
                 AlwaysOnTop = false,
                 LightInfluence = 0,
-                MaxDistance = 85,
+                MaxDistance = 0,
                 Enabled = false,
             })
             item.Shape, item.Lines = snowShape(item.Gui)
         else
-            p.Size = Vector3.new(0.045, 0.045, 1.6)
-            p.Material = Enum.Material.Neon
-            p.Color = RGB(195, 215, 234)
+            -- Short, tapered streaks with faded ends; no opaque neon geometry.
+            local length = rng:NextNumber(0.55, 1.0)
+            local a = make("Attachment",p,{Position=Vector3.new(0,0,length/2)})
+            local b = make("Attachment",p,{Position=Vector3.new(0,0,-length/2)})
+            item.Beam = make("Beam",p,{
+                Attachment0=a, Attachment1=b, FaceCamera=true, Segments=3,
+                Width0=0.012, Width1=0.032, LightEmission=0, LightInfluence=0.25,
+                Color=ColorSequence.new(RGB(185,209,225)), Enabled=false,
+                Transparency=NumberSequence.new({
+                    NumberSequenceKeypoint.new(0,1),
+                    NumberSequenceKeypoint.new(0.3,0.58),
+                    NumberSequenceKeypoint.new(0.75,0.42),
+                    NumberSequenceKeypoint.new(1,1),
+                }),
+            })
         end
 
         table.insert(flakes, item)
@@ -683,6 +709,14 @@ local function initVisuals(name)
         else
             f.BackgroundColor3 = RGB(139, 170, 190)
             round(f, 20)
+            make("UIGradient", f, {
+                Rotation=30,
+                Transparency=NumberSequence.new({
+                    NumberSequenceKeypoint.new(0,0.75),
+                    NumberSequenceKeypoint.new(0.4,0.15),
+                    NumberSequenceKeypoint.new(1,0.9),
+                }),
+            })
 
             item.Stroke = make("UIStroke", f, {
                 Color = RGB(215, 237, 249),
@@ -693,9 +727,9 @@ local function initVisuals(name)
             make("UIGradient", item.Stroke, {
                 Rotation = 65,
                 Transparency = NumberSequence.new({
-                    NumberSequenceKeypoint.new(0, 0.1),
-                    NumberSequenceKeypoint.new(0.5, 0.9),
-                    NumberSequenceKeypoint.new(1, 0.2),
+                    NumberSequenceKeypoint.new(0, 0.2),
+                    NumberSequenceKeypoint.new(0.5, 1),
+                    NumberSequenceKeypoint.new(1, 0.95),
                 }),
             })
         end
@@ -720,8 +754,8 @@ local function initVisuals(name)
         local p = visualPart("RainPuddle")
         p.Shape = Enum.PartType.Cylinder
         p.Material = Enum.Material.Glass
-        p.Color = RGB(59, 77, 91)
-        p.Reflectance = 0.3
+        p.Color = RGB(172, 190, 201)
+        p.Reflectance = 0.45
 
         table.insert(puddles, {Part = p, Active = false})
     end
@@ -767,7 +801,7 @@ local function stable(hit)
 end
 
 local function impact(hit)
-    if not stable(hit) then return end
+    if not stable(hit) or not inWeatherRadius(hit.Position, weatherCenter()) then return end
 
     local n = hit.Normal
     local tangent = Vector3.new(1, 0, 0)
@@ -862,7 +896,8 @@ local function spawnFlake(camera)
     local angle = rng:NextNumber(0, math.pi * 2)
     local radius = math.sqrt(rng:NextNumber()) * CFG.Radius
 
-    local origin = camera.CFrame.Position + Vector3.new(
+    local center = weatherCenter()
+    local origin = center + Vector3.new(
         math.cos(angle) * radius,
         snow and rng:NextNumber(3, 12) or rng:NextNumber(10, 20),
         math.sin(angle) * radius
@@ -912,7 +947,7 @@ local function spawnLens()
             local size = rng:NextInteger(
                 8, S.active == "Snowfall" and 18 or 12
             )
-            f.Frame.Size = UDim2.fromOffset(size, size * 1.15)
+            f.Frame.Size = UDim2.fromOffset(size, size * (S.active == "Snowfall" and 1.15 or 1.6))
             f.Frame.Position = UDim2.fromScale(f.X, f.Y)
             f.Frame.Visible = true
             return
@@ -921,6 +956,7 @@ local function spawnLens()
 end
 
 local function updateVisuals(dt, camera)
+    local center = weatherCenter()
     local snow = S.active == "Snowfall"
 
     for _, f in ipairs(flakes) do
@@ -940,7 +976,7 @@ local function updateVisuals(dt, camera)
                 )
 
                 remove = age >= f.Life
-                    or (pos - camera.CFrame.Position).Magnitude > 80
+                    or not inWeatherRadius(pos, center)
 
                 f.Check = f.Check + dt
 
@@ -966,14 +1002,23 @@ local function updateVisuals(dt, camera)
                 )
             else
                 local travel = f.Age * 85
-                remove = travel >= f.Distance
+                local pos = f.Origin + f.Direction * travel
+                remove = travel >= f.Distance or not inWeatherRadius(pos, center)
 
                 if remove then
-                    if f.Hit then impact(f.Hit) end
+                    if travel >= f.Distance and f.Hit then impact(f.Hit) end
                 else
-                    local pos = f.Origin + f.Direction * travel
                     f.Part.CFrame = CFrame.lookAt(pos, pos + f.Direction)
-                    f.Part.Transparency = 1 - 0.48 * S.intensity
+                    local distance = (pos-camera.CFrame.Position).Magnitude
+                    -- Fade drops extremely close to the lens instead of enlarging them.
+                    f.Beam.Enabled = distance > 1.5
+                    local visibility = S.intensity * math.clamp((distance-1.5)/3,0,1)
+                    f.Beam.Transparency = NumberSequence.new({
+                        NumberSequenceKeypoint.new(0,1),
+                        NumberSequenceKeypoint.new(0.3,1-0.42*visibility),
+                        NumberSequenceKeypoint.new(0.75,1-0.58*visibility),
+                        NumberSequenceKeypoint.new(1,1),
+                    })
                 end
             end
 
@@ -981,6 +1026,7 @@ local function updateVisuals(dt, camera)
                 f.Active = false
                 f.Part.Transparency = 1
                 if f.Gui then f.Gui.Enabled = false end
+                if f.Beam then f.Beam.Enabled = false end
             end
         end
     end
@@ -989,7 +1035,7 @@ local function updateVisuals(dt, camera)
         if f.Active then
             local age=S.time-f.Born
             local expired=age>=12 or not f.Support.Parent
-                or (f.Part.Position-camera.CFrame.Position).Magnitude>90
+                or not inWeatherRadius(f.Part.Position, center)
             if expired then
                 f.Active=false; f.Gui.Enabled=false
             else
@@ -1002,6 +1048,7 @@ local function updateVisuals(dt, camera)
         if r.Age < 0.65 then
             r.Age = r.Age + dt
 
+            if not inWeatherRadius(r.Part.Position, center) then r.Age=0.65 end
             local a = math.clamp(r.Age / 0.65, 0, 1)
             local size = 0.2 + a * 1.7
 
@@ -1014,9 +1061,10 @@ local function updateVisuals(dt, camera)
 
     for _, p in ipairs(puddles) do
         if p.Active then
+            local outside = not inWeatherRadius(p.Position, center)
             local expired = S.time - p.Born > 65
-                or not p.Support.Parent
-                or (p.Position - camera.CFrame.Position).Magnitude > 110
+                or not p.Support.Parent or outside
+            if outside then p.Wet=0 end
 
             local target = expired and 0 or S.intensity
 
@@ -1028,7 +1076,7 @@ local function updateVisuals(dt, camera)
                 p.Diameter * growth,
                 p.Diameter * p.Aspect * growth
             )
-            p.Part.Transparency = 1 - p.Wet * 0.52
+            p.Part.Transparency = 1 - p.Wet * 0.26
 
             if expired and p.Wet < 0.015 then
                 p.Active = false
@@ -1056,7 +1104,7 @@ local function updateVisuals(dt, camera)
             else
                 f.Frame.BackgroundColor3 = RGB(139, 170, 190)
                 f.Frame.BackgroundTransparency = 1 - a * 0.18
-                f.Stroke.Transparency = 1 - a * 0.7
+                f.Stroke.Transparency = 1 - a * 0.35
             end
 
             if f.Age >= f.Life then
@@ -1467,4 +1515,5 @@ task.defer(function()
         resize(true)
     end
 end)
+
 
