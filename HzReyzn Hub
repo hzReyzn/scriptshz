@@ -16,6 +16,9 @@ end
 local connections = {}
 local destroyed = false
 local cleanupProtection = function() end
+local cleanupNDS = function() end
+local refreshNDS = function() end
+local ndsSpeedLimit = 0
 
 local function connect(signal, callback)
     local connection = signal:Connect(callback)
@@ -93,6 +96,7 @@ connect(gui.Destroying, function()
     if destroyed then return end
     destroyed = true
     cleanupProtection()
+    cleanupNDS()
 
     for _, connection in ipairs(connections) do
         connection:Disconnect()
@@ -261,7 +265,10 @@ local function scrollingPage(name)
     return scroll
 end
 
-local mainScroll = scrollingPage("MainScroll")
+local mainScroll = scrollingPage("ShadersScroll")
+local ndsScroll = scrollingPage("NDSScroll")
+ndsScroll.Position = UDim2.fromOffset(0, 78)
+ndsScroll.Size = UDim2.fromOffset(498, 234)
 local othersScroll = scrollingPage("OthersScriptsScroll")
 
 local settingsPage = make("Frame", content, {
@@ -324,14 +331,14 @@ for index, option in ipairs(themeOptions) do
 end
 
 local antiflingEnabled = false
-local protectionRow = make("Frame", mainScroll, {
+local protectionRow = make("Frame", ndsScroll, {
     LayoutOrder = 1,
     Size = UDim2.new(1, 0, 0, 56),
     BackgroundTransparency = 1,
 })
 
 local antiflingButton = button(
-    protectionRow, "Antifling: OFF",
+    protectionRow, "Antifling",
     UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 56)
 )
 antiflingButton.Font = Enum.Font.GothamBold
@@ -346,8 +353,7 @@ local antiflingStroke = make("UIStroke", antiflingButton, {
 
 
 local function refreshProtection()
-    antiflingButton.Text = antiflingEnabled
-        and "Antifling: ON" or "Antifling: OFF"
+    antiflingButton.Text = "Antifling"
 
     antiflingButton.TextColor3 = antiflingEnabled and accentColor or muted
     antiflingButton.BackgroundColor3 = antiflingEnabled
@@ -357,10 +363,23 @@ local function refreshProtection()
     antiflingStroke.Transparency = antiflingEnabled and 0.08 or 0.5
 end
 
+local antiflingDot = make("Frame", antiflingButton, {
+    Position=UDim2.new(1,-27,0.5,-5), Size=UDim2.fromOffset(10,10),
+    BackgroundColor3=muted, BorderSizePixel=0,
+})
+round(antiflingDot, 5)
+local originalRefreshProtection = refreshProtection
+refreshProtection = function()
+    originalRefreshProtection()
+    antiflingDot.BackgroundColor3 = antiflingEnabled and accentColor or muted
+    antiflingDot.BackgroundTransparency = antiflingEnabled and 0 or 0.65
+end
+
 local tabs = {}
 local selectedTab = 1
 local pages = {
-    {"Main", "MAIN", "More Features soon", ""},
+    {"Shaders", "SHADERS", "More Features soon", ""},
+    {"NDS", "NDS", "NDS", ""},
     {"Others scripts", "SCRIPTS (NOT MINE)", "Others scripts", "Tap a script to launch it."},
     {"Settings", "PREFERENCES", "Select Your Theme | More soon", "Customize your interface."},
 }
@@ -368,8 +387,9 @@ local pages = {
 local function selectTab(index)
     selectedTab = index
     mainScroll.Visible = index == 1
-    othersScroll.Visible = index == 2
-    settingsPage.Visible = index == 3
+    ndsScroll.Visible = index == 2
+    othersScroll.Visible = index == 3
+    settingsPage.Visible = index == 4
 
     for i, tab in ipairs(tabs) do
         tab.BackgroundColor3 = i == index
@@ -382,7 +402,7 @@ local function selectTab(index)
     title.Text = page[3]
     description.Text = page[4]
     description.Visible = page[4] ~= ""
-    title.TextSize = index == 3 and 23 or 25
+    title.TextSize = index == 4 and 23 or 25
     local top = index == 1 and 78 or 105
     mainScroll.Position = UDim2.fromOffset(0, top)
     mainScroll.Size = UDim2.fromOffset(498, 312 - top)
@@ -394,7 +414,7 @@ for index, page in ipairs(pages) do
         UDim2.fromOffset(10, 50 + (index - 1) * 57),
         UDim2.fromOffset(126, 47)
     )
-    if index == 2 then tab.TextSize = 13 end
+    if index == 3 then tab.TextSize = 13 end
     tabs[index] = tab
     connect(tab.Activated, function() selectTab(index) end)
 end
@@ -678,7 +698,7 @@ do
         local velocity = root.AssemblyLinearVelocity
         local horizontal = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
 
-        local extreme = horizontal > CONFIG.MaxHorizontalSpeed
+        local extreme = horizontal > math.max(CONFIG.MaxHorizontalSpeed, ndsSpeedLimit * 1.5 + 20)
             or velocity.Y > CONFIG.MaxUpwardSpeed
             or root.AssemblyAngularVelocity.Magnitude > CONFIG.MaxAngularSpeed
 
@@ -736,6 +756,271 @@ do
     connect(RunService.PostSimulation, protect)
     setEnabled(false)
 end
+
+-- NDS controls: no map-wide scans; defaults are OFF.
+do
+    local flags = {noclip=false, jump=false, float=false, gravity=false, slow=false, speed=false}
+    local values = {gravity=workspace.Gravity, slow=22, speed=16}
+    local controls = {}
+    local char, hum, root
+    local speedHum, oldSpeed, oldGravity
+    local jumpConnection
+    local characterConnections = {}
+    local pendingFloor = false
+    local lastJump = 0
+    local floatFolder = make("Folder", workspace, {Name="HZLocalFloatFloors"})
+    local clipFolder = make("Folder", workspace, {Name="HZLocalWallConstraints"})
+    local floorParts = {}
+    local wallPairs = {}
+    local overlap = OverlapParams.new()
+    overlap.FilterType = Enum.RaycastFilterType.Exclude
+    overlap.MaxParts = 48
+    local ray = RaycastParams.new()
+    ray.FilterType = Enum.RaycastFilterType.Exclude
+    ray.RespectCanCollide = true
+
+    local function clearFloors()
+        pendingFloor = false
+        floatFolder:ClearAllChildren()
+        table.clear(floorParts)
+    end
+    local function clearWalls()
+        clipFolder:ClearAllChildren()
+        table.clear(wallPairs)
+    end
+    local function restoreSpeed()
+        if speedHum and speedHum.Parent and oldSpeed ~= nil then
+            speedHum.WalkSpeed = oldSpeed
+        end
+        speedHum, oldSpeed = nil, nil
+        ndsSpeedLimit = 0
+    end
+    local function applySpeed()
+        if not hum or hum.Health <= 0 then return end
+        if speedHum ~= hum then
+            restoreSpeed()
+            speedHum, oldSpeed = hum, hum.WalkSpeed
+        end
+        hum.WalkSpeed = values.speed
+        ndsSpeedLimit = values.speed
+    end
+    local function applyValue(key)
+        if key == "gravity" and flags.gravity then workspace.Gravity = values.gravity end
+        if key == "speed" and flags.speed then applySpeed() end
+    end
+    local function setFlag(key, on)
+        flags[key] = on
+        if key == "gravity" then
+            if on then oldGravity = workspace.Gravity; applyValue(key)
+            elseif oldGravity ~= nil then workspace.Gravity = oldGravity; oldGravity = nil end
+        elseif key == "speed" then
+            if on then applySpeed() else restoreSpeed() end
+        elseif key == "noclip" then clearWalls()
+        elseif key == "float" and not on then clearFloors() end
+        refreshNDS()
+    end
+    local function numericValue(text, fallback, low, high)
+        local n = tonumber((tostring(text):gsub(",", ".")))
+        if not n or n ~= n or n == math.huge or n == -math.huge then return fallback end
+        return math.clamp(n, low, high)
+    end
+    local function addControl(name, key, order, numeric)
+        local height = numeric and 100 or 56
+        local row = make("Frame", ndsScroll, {
+            Name=key, LayoutOrder=order, Size=UDim2.new(1,0,0,height),
+            BackgroundColor3=panelColor, BorderSizePixel=0,
+        })
+        round(row,12)
+        local heading = label(row,name,UDim2.fromOffset(14,0),UDim2.new(1,-98,0,56),15,white)
+        heading.Font=Enum.Font.GothamBold
+        local toggle=button(row,"OFF",UDim2.new(1,-73,0,11),UDim2.fromOffset(60,34))
+        toggle.TextSize=12
+        local entry={row=row,toggle=toggle,key=key}
+        controls[#controls+1]=entry
+        connect(toggle.Activated,function() setFlag(key,not flags[key]) end)
+        if numeric then
+            local minus=button(row,"−",UDim2.fromOffset(14,57),UDim2.fromOffset(32,32))
+            local field=make("TextBox",row,{
+                Position=UDim2.fromOffset(54,57),Size=UDim2.new(1,-108,0,32),
+                Text=tostring(values[key]),ClearTextOnFocus=false,
+                BackgroundColor3=dark,TextColor3=white,BorderSizePixel=0,
+                Font=Enum.Font.GothamMedium,TextSize=14,
+            })
+            round(field,7)
+            local plus=button(row,"+",UDim2.new(1,-46,0,57),UDim2.fromOffset(32,32))
+            entry.field=field;entry.minus=minus;entry.plus=plus
+            local function commit(n)
+                values[key]=numericValue(n,values[key],numeric.min,numeric.max)
+                field.Text=string.format("%.2f",values[key]):gsub("0+$",""):gsub("%.$","")
+                applyValue(key)
+            end
+            connect(field.FocusLost,function() commit(field.Text) end)
+            connect(minus.Activated,function() commit(values[key]-numeric.step) end)
+            connect(plus.Activated,function() commit(values[key]+numeric.step) end)
+        end
+    end
+    refreshNDS=function()
+        for _,entry in ipairs(controls) do
+            entry.row.BackgroundColor3=panelColor
+            entry.toggle.Text=flags[entry.key] and "ON" or "OFF"
+            entry.toggle.BackgroundColor3=flags[entry.key] and selectedBackground or idleTabColor
+            entry.toggle.TextColor3=flags[entry.key] and accentColor or muted
+            if entry.field then
+                entry.field.BackgroundColor3=dark
+                entry.minus.BackgroundColor3=idleTabColor;entry.plus.BackgroundColor3=idleTabColor
+                entry.minus.TextColor3=accentColor;entry.plus.TextColor3=accentColor
+            end
+        end
+    end
+    addControl("No collision | Noclip","noclip",2)
+    addControl("Inf Jump","jump",3)
+    addControl("Float","float",4)
+    addControl("Gravity","gravity",5,{step=5,min=0,max=1000})
+    addControl("Slow fall","slow",6,{step=1,min=1,max=150})
+    addControl("Speed","speed",7,{step=1,min=0,max=300})
+    refreshNDS()
+
+    local function bind(model)
+        if jumpConnection then jumpConnection:Disconnect();jumpConnection=nil end
+        for _,c in ipairs(characterConnections) do c:Disconnect() end
+        table.clear(characterConnections)
+        restoreSpeed();clearWalls();clearFloors()
+        char=model;hum=nil;root=nil;lastJump=0
+    end
+    local function resolveCharacter()
+        if not char or not char.Parent then return false end
+        local h=char:FindFirstChildOfClass("Humanoid")
+        root=char:FindFirstChild("HumanoidRootPart")
+        if h ~= hum then
+            if jumpConnection then jumpConnection:Disconnect();jumpConnection=nil end
+            restoreSpeed()
+            hum=h
+            if hum then
+                jumpConnection=hum.StateChanged:Connect(function(_,state)
+                    if flags.float and state==Enum.HumanoidStateType.Jumping then pendingFloor=true end
+                    if state==Enum.HumanoidStateType.Dead then clearWalls();clearFloors();restoreSpeed() end
+                end)
+            end
+        end
+        return hum and root and hum.Health>0 and not hum.SeatPart and not root.Anchored
+    end
+    connect(player.CharacterAdded,bind)
+    connect(player.CharacterRemoving,function(model) if char==model then bind(nil) end end)
+    bind(player.Character)
+    connect(UIS.JumpRequest,function()
+        if destroyed or UIS:GetFocusedTextBox() or not flags.jump or not resolveCharacter() then return end
+        local now=os.clock()
+        if now-lastJump<0.18 then return end
+        lastJump=now
+        local velocity=hum.UseJumpPower and hum.JumpPower
+            or math.sqrt(2*math.max(workspace.Gravity,1)*hum.JumpHeight)
+        local v=root.AssemblyLinearVelocity
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        root.AssemblyLinearVelocity=Vector3.new(v.X,math.max(velocity,35),v.Z)
+        if flags.float then pendingFloor=true end
+    end)
+    local function floorDistance()
+        local leg=char:FindFirstChild("Left Leg")
+        return hum.HipHeight+root.Size.Y*0.5+(leg and leg.Size.Y or 0)
+    end
+    local function addFloor()
+        local floor=make("Part",floatFolder,{
+            Name="HZFloatFloor",Size=Vector3.new(8,0.35,8),
+            CFrame=CFrame.new(root.Position-Vector3.new(0,floorDistance()+0.25,0)),
+            Anchored=true,Transparency=1,CanCollide=true,CanTouch=false,CanQuery=true,
+        })
+        floorParts[#floorParts+1]=floor
+        -- Bound persistent platform count for long mobile sessions.
+        if #floorParts>80 then table.remove(floorParts,1):Destroy() end
+    end
+    local function isCharacter(part)
+        local parent=part.Parent
+        while parent and parent~=workspace do
+            if parent:IsA("Model") and parent:FindFirstChildOfClass("Humanoid") then return true end
+            parent=parent.Parent
+        end
+        return false
+    end
+    local function scanWalls()
+        overlap.FilterDescendantsInstances={char,floatFolder,clipFolder}
+        ray.FilterDescendantsInstances={char,floatFolder,clipFolder}
+        local protected={}
+        local reach=floorDistance()+3
+        for _,offset in ipairs({Vector3.zero,Vector3.new(1,0,0),Vector3.new(-1,0,0),Vector3.new(0,0,1),Vector3.new(0,0,-1)}) do
+            for _,sign in ipairs({-1,1}) do
+                local hit=workspace:Raycast(root.Position+offset,Vector3.new(0,sign*reach,0),ray)
+                if hit and math.abs(hit.Normal.Y)>0.45 then protected[hit.Instance]=true end
+            end
+        end
+        local nearby=workspace:GetPartBoundsInBox(root.CFrame,Vector3.new(12,9,12),overlap)
+        local wanted,body={},{}
+        for _,p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") and not p:FindFirstAncestorOfClass("Accessory") and not p:FindFirstAncestorOfClass("Tool") then body[p]=true end
+        end
+        local count=0
+        for _,p in ipairs(nearby) do
+            if count<16 and p.CanCollide and not protected[p] and not isCharacter(p) then
+                -- Keep horizontal slabs, ramps, terrain, floors and ceilings solid.
+                local axes={p.CFrame.RightVector,p.CFrame.UpVector,p.CFrame.LookVector}
+                local dimensions={p.Size.X,p.Size.Y,p.Size.Z}
+                local thin=1
+                for i=2,3 do if dimensions[i]<dimensions[thin] then thin=i end end
+                if math.abs(axes[thin].Y)<0.45 and not p:IsA("Terrain") then
+                    wanted[p]=true;count=count+1
+                end
+            end
+        end
+        for wall,mapping in pairs(wallPairs) do
+            for part,constraint in pairs(mapping) do
+                if not wanted[wall] or not body[part] or not wall.Parent then
+                    constraint:Destroy();mapping[part]=nil
+                end
+            end
+            if not wanted[wall] or not wall.Parent then wallPairs[wall]=nil end
+        end
+        for wall in pairs(wanted) do
+            local mapping=wallPairs[wall] or {};wallPairs[wall]=mapping
+            for part in pairs(body) do
+                if not mapping[part] then
+                    mapping[part]=make("NoCollisionConstraint",clipFolder,{Part0=part,Part1=wall})
+                end
+            end
+        end
+    end
+    local scanClock,speedClock=0,0
+    connect(RunService.PreSimulation,function(dt)
+        if destroyed then return end
+        if not (flags.noclip or flags.jump or flags.float or flags.speed or flags.slow) then return end
+        if not resolveCharacter() then
+            if next(wallPairs) then clearWalls() end
+            pendingFloor=false
+            return
+        end
+        speedClock=speedClock+dt
+        if flags.speed and speedClock>=0.15 then speedClock=0;applySpeed() end
+        if flags.slow then
+            local v=root.AssemblyLinearVelocity
+            if v.Y < -values.slow then root.AssemblyLinearVelocity=Vector3.new(v.X,-values.slow,v.Z) end
+        end
+        if flags.float and pendingFloor and root.AssemblyLinearVelocity.Y<=1 then
+            pendingFloor=false;addFloor()
+        end
+        if flags.noclip then
+            scanClock=scanClock+dt
+            if scanClock>=0.12 then scanClock=0;scanWalls() end
+        end
+    end)
+    cleanupNDS=function()
+        for key in pairs(flags) do flags[key]=false end
+        if jumpConnection then jumpConnection:Disconnect();jumpConnection=nil end
+        for _,c in ipairs(characterConnections) do c:Disconnect() end
+        restoreSpeed()
+        if oldGravity~=nil then workspace.Gravity=oldGravity;oldGravity=nil end
+        clearWalls();clearFloors()
+        clipFolder:Destroy();floatFolder:Destroy()
+    end
+end
+
 -- Logo HZ, animación de colores y movimiento.
 
 local launcher = button(
@@ -844,6 +1129,8 @@ paintColors = function(phase)
 
     mainScroll.ScrollBarImageColor3 = accentColor
     othersScroll.ScrollBarImageColor3 = accentColor
+    ndsScroll.ScrollBarImageColor3 = accentColor
+    refreshNDS()
 
     minimize.BackgroundColor3 = panelColor
     close.BackgroundColor3 = panelColor
@@ -1038,3 +1325,4 @@ task.defer(function()
         resize(true)
     end
 end)
+
