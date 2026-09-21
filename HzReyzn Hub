@@ -1,0 +1,796 @@
+-- AÑADIR AL FINAL DE HZREYZN HUB CON ANTIFLING INTEGRADO.
+-- No ejecutar este bloque por separado.
+
+do
+    assert(
+        gui and content and antiflingButton and selectTab,
+        "Append this block to HzReyzn Hub with integrated Antifling."
+    )
+
+    pages[1] = {
+        "Main",
+        "MAIN",
+        "Your controls",
+        "Manage protection and launch your shaders."
+    }
+
+    pages[2] = {
+        "Others scripts",
+        "SCRIPTS (NOT MINE)",
+        "Others scripts",
+        "Tap a script to launch it."
+    }
+
+    tabs[1].Text = "Main"
+    tabs[2].Text = "Others scripts"
+    tabs[2].TextSize = 13
+
+    -- Scroll nativo: permite deslizar con el dedo,
+    -- usar la rueda del mouse y arrastrar la barra.
+    local function scrollingPage(name)
+        local scroll = make("ScrollingFrame", content, {
+            Name = name,
+            Position = UDim2.fromOffset(0, 111),
+            Size = UDim2.fromOffset(498, 151),
+
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+
+            CanvasSize = UDim2.fromOffset(0, 0),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            ScrollingDirection = Enum.ScrollingDirection.Y,
+
+            ScrollBarThickness = 4,
+            ScrollBarImageColor3 = pink,
+            ElasticBehavior = Enum.ElasticBehavior.WhenScrollable,
+
+            Active = true,
+            ClipsDescendants = true,
+            Visible = false,
+        })
+
+        make("UIPadding", scroll, {
+            PaddingTop = UDim.new(0, 4),
+            PaddingBottom = UDim.new(0, 10),
+            PaddingLeft = UDim.new(0, 3),
+            PaddingRight = UDim.new(0, 11),
+        })
+
+        make("UIListLayout", scroll, {
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Padding = UDim.new(0, 10),
+        })
+
+        return scroll
+    end
+
+    local mainScroll = scrollingPage("MainScroll")
+    local othersScroll = scrollingPage("OthersScriptsScroll")
+
+    -- Mueve el antifling existente: conserva sus funciones y estado.
+    local protectionRow = make("Frame", mainScroll, {
+        Name = "AntiflingRow",
+        LayoutOrder = 1,
+        Size = UDim2.new(1, 0, 0, 96),
+        BackgroundTransparency = 1,
+    })
+
+    antiflingButton.Parent = protectionRow
+    antiflingButton.Position = UDim2.fromOffset(0, 0)
+    antiflingButton.Size = UDim2.new(1, 0, 0, 56)
+
+    antiflingNote.Parent = protectionRow
+    antiflingNote.Position = UDim2.fromOffset(5, 62)
+    antiflingNote.Size = UDim2.new(1, -10, 0, 32)
+    antiflingNote.TextWrapped = true
+
+    -- Crea un botón que ejecuta el script al tocarlo.
+    -- No muestra el código ni la URL dentro del GUI.
+    local function scriptButton(parent, name, url, order)
+        local row = button(
+            parent,
+            "",
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, 86)
+        )
+
+        row.Name = name
+        row.LayoutOrder = order
+
+        local titleLabel = label(
+            row,
+            name,
+            UDim2.fromOffset(14, 9),
+            UDim2.new(1, -28, 0, 39),
+            15
+        )
+
+        titleLabel.Font = Enum.Font.GothamBold
+        titleLabel.TextWrapped = true
+
+        local stateLabel = label(
+            row,
+            "Tap to execute",
+            UDim2.fromOffset(14, 53),
+            UDim2.new(1, -28, 0, 20),
+            11,
+            muted
+        )
+
+        local busy = false
+
+        local function show(text, color)
+            if not destroyed and row.Parent then
+                stateLabel.Text = text
+                stateLabel.TextColor3 = color or muted
+            end
+        end
+
+        connect(row.Activated, function()
+            if busy or destroyed then return end
+
+            busy = true
+            show("Loading...", pink)
+
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    if type(loadstring) ~= "function" then
+                        error("loadstring is unavailable in this environment.")
+                    end
+
+                    local source = game:HttpGet(url)
+
+                    -- No inicia una descarga terminada después de cerrar el Hub.
+                    if destroyed then return end
+
+                    if type(source) ~= "string"
+                        or source:match("^%s*$") then
+                        error("The URL returned no script.")
+                    end
+
+                    local executable, compileError = loadstring(source)
+
+                    if not executable then
+                        error(compileError or "Invalid Lua source.")
+                    end
+
+                    if destroyed then return end
+
+                    show("Starting...", pink)
+                    executable()
+                end)
+
+                if destroyed then return end
+
+                if ok then
+                    show(
+                        "Executed • Tap to run again",
+                        Color3.fromRGB(158, 219, 185)
+                    )
+                else
+                    show(
+                        "Could not execute • Tap to retry",
+                        Color3.fromRGB(246, 151, 160)
+                    )
+
+                    warn(
+                        "[HzReyzn Hub / " .. name .. "] "
+                        .. tostring(err)
+                    )
+                end
+
+                task.delay(0.75, function()
+                    busy = false
+                end)
+            end)
+        end)
+    end
+
+    -- MAIN
+    scriptButton(
+        mainScroll,
+        "HzReyzn Shaders - The BEST Shaders",
+        "https://raw.githubusercontent.com/hzReyzn/scriptshz/refs/heads/main/HzReyzn%20Shaders",
+        2
+    )
+
+    -- OTHERS SCRIPTS
+    local scripts = {
+        {
+            "Super Ring Parts",
+            "https://raw.githubusercontent.com/WanSeven-W67/Release-Script-/refs/heads/main/Super%20Blackhole%20Nasywan%20W7s"
+        },
+        {
+            "Telekinesis Ui",
+            "https://pastebin.com/raw/VVWcfs9t"
+        },
+        {
+            "Vehicle Fly",
+            "https://raw.githubusercontent.com/willthingVN/script-lua/refs/heads/main/Vehicle%20Fly%20Gui.lua"
+        },
+        {
+            "Kevin DropKick",
+            "https://raw.githubusercontent.com/WithKevinDev/Kevin-Hub-DropKicker/refs/heads/main/main.lua"
+        },
+        {
+            "Six Hub",
+            "https://raw.githubusercontent.com/ySixxNz/Natural-Desastre/Six-Hub/NaturalDisaster"
+        },
+    }
+
+    for index, entry in ipairs(scripts) do
+        scriptButton(
+            othersScroll,
+            entry[1],
+            entry[2],
+            index
+        )
+    end
+
+    -- Mantiene Settings y adapta la navegación existente.
+    local originalSelectTab = selectTab
+
+    selectTab = function(index)
+        originalSelectTab(index)
+
+        card.Visible = false
+        mainScroll.Visible = index == 1
+        othersScroll.Visible = index == 2
+
+        -- Ahora la visibilidad depende del panel padre.
+        antiflingButton.Visible = true
+        antiflingNote.Visible = true
+    end
+
+    selectTab(1)
+end
+-- Botones para scripts externos.
+
+local function scriptButton(parent, name, url, order)
+    local row = button(
+        parent, "", UDim2.fromOffset(0, 0),
+        UDim2.new(1, 0, 0, 94)
+    )
+    row.Name = name
+    row.LayoutOrder = order
+
+    local titleLabel = label(
+        row, name, UDim2.fromOffset(14, 10),
+        UDim2.new(1, -28, 0, 42), 15
+    )
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextWrapped = true
+
+    local stateLabel = label(
+        row, "Tap to execute",
+        UDim2.fromOffset(14, 61),
+        UDim2.new(1, -28, 0, 20),
+        11, muted
+    )
+
+    local busy = false
+
+    local function show(text, color)
+        if destroyed or not row.Parent then return end
+        stateLabel.Text = text
+        stateLabel.TextColor3 = color or muted
+    end
+
+    connect(row.Activated, function()
+        if busy or destroyed then return end
+        busy = true
+        show("Loading...", accentColor)
+
+        task.spawn(function()
+            local ok, err = pcall(function()
+                if type(loadstring) ~= "function" then
+                    error("loadstring is unavailable in this environment.")
+                end
+
+                local source = game:HttpGet(url)
+                if destroyed then return end
+
+                if type(source) ~= "string" or source:match("^%s*$") then
+                    error("The URL returned no script.")
+                end
+
+                local executable, compileError = loadstring(source)
+                if not executable then
+                    error(compileError or "Invalid Lua source.")
+                end
+
+                if destroyed then return end
+                show("Starting...", accentColor)
+                executable()
+            end)
+
+            if destroyed then return end
+
+            if ok then
+                show(
+                    "Executed • Tap to run again",
+                    Color3.fromRGB(158, 219, 185)
+                )
+            else
+                show(
+                    "Could not execute • Tap to retry",
+                    Color3.fromRGB(246, 151, 160)
+                )
+                warn("[HzReyzn Hub / " .. name .. "] " .. tostring(err))
+            end
+
+            task.delay(0.75, function()
+                busy = false
+            end)
+        end)
+    end)
+end
+
+scriptButton(
+    mainScroll,
+    "HzReyzn Shaders - The BEST Shaders",
+    "https://raw.githubusercontent.com/hzReyzn/scriptshz/refs/heads/main/HzReyzn%20Shaders",
+    2
+)
+
+local externalScripts = {
+    {
+        "Super Ring Parts",
+        "https://raw.githubusercontent.com/WanSeven-W67/Release-Script-/refs/heads/main/Super%20Blackhole%20Nasywan%20W7s"
+    },
+    {
+        "Telekinesis Ui",
+        "https://pastebin.com/raw/VVWcfs9t"
+    },
+    {
+        "Vehicle Fly",
+        "https://raw.githubusercontent.com/willthingVN/script-lua/refs/heads/main/Vehicle%20Fly%20Gui.lua"
+    },
+    {
+        "Kevin DropKick",
+        "https://raw.githubusercontent.com/WithKevinDev/Kevin-Hub-DropKicker/refs/heads/main/main.lua"
+    },
+    {
+        "Six Hub",
+        "https://raw.githubusercontent.com/ySixxNz/Natural-Desastre/Six-Hub/NaturalDisaster"
+    },
+}
+
+for index, entry in ipairs(externalScripts) do
+    scriptButton(othersScroll, entry[1], entry[2], index)
+end
+
+-- Antifling integrado; comienza apagado.
+
+do
+    local CONFIG = {
+        MaxHorizontalSpeed = 140,
+        MaxUpwardSpeed = 180,
+        MaxAngularSpeed = 65,
+        PlayerRadius = 65,
+        ScanInterval = 0.25,
+        SafePositionAge = 1.5,
+        MaxRecoveryDistance = 60,
+    }
+
+    local character, humanoid, root
+    local safeCFrame, safeTime
+    local recoveryUntil = 0
+    local scanClock = 0
+    local pairsByPart = {}
+
+    local constraintFolder = make("Folder", workspace, {
+        Name = "HZAntiflingLocalConstraints"
+    })
+
+    local function clearConstraints()
+        constraintFolder:ClearAllChildren()
+        table.clear(pairsByPart)
+    end
+
+    local function resetRecovery()
+        safeCFrame, safeTime = nil, nil
+        recoveryUntil = 0
+    end
+
+    cleanupProtection = function()
+        antiflingEnabled = false
+        constraintFolder:Destroy()
+        table.clear(pairsByPart)
+        resetRecovery()
+    end
+
+    local function setEnabled(value)
+        if destroyed then return end
+
+        antiflingEnabled = value == true
+        clearConstraints()
+        resetRecovery()
+        scanClock = CONFIG.ScanInterval
+        refreshProtection()
+    end
+
+    connect(antiflingButton.Activated, function()
+        setEnabled(not antiflingEnabled)
+    end)
+
+    local function bindCharacter(newCharacter)
+        character = newCharacter
+        humanoid, root = nil, nil
+        clearConstraints()
+        resetRecovery()
+        scanClock = CONFIG.ScanInterval
+    end
+
+    connect(player.CharacterAdded, bindCharacter)
+
+    connect(player.CharacterRemoving, function(removing)
+        if character == removing then
+            bindCharacter(nil)
+        end
+    end)
+
+    bindCharacter(player.Character)
+
+    local function updateConstraints()
+        local localParts, otherParts = {}, {}
+
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then localParts[part] = true end
+        end
+
+        for _, other in ipairs(Players:GetPlayers()) do
+            local model = other.Character
+            local otherRoot = model and model:FindFirstChild("HumanoidRootPart")
+
+            if other ~= player and otherRoot
+                and (otherRoot.Position - root.Position).Magnitude
+                    <= CONFIG.PlayerRadius then
+
+                for _, part in ipairs(model:GetDescendants()) do
+                    if part:IsA("BasePart") then otherParts[part] = true end
+                end
+            end
+        end
+
+        for localPart, mapping in pairs(pairsByPart) do
+            for otherPart, constraint in pairs(mapping) do
+                if not localParts[localPart] or not otherParts[otherPart] then
+                    constraint:Destroy()
+                    mapping[otherPart] = nil
+                end
+            end
+
+            if not localParts[localPart] then
+                pairsByPart[localPart] = nil
+            end
+        end
+
+        for localPart in pairs(localParts) do
+            local mapping = pairsByPart[localPart] or {}
+            pairsByPart[localPart] = mapping
+
+            for otherPart in pairs(otherParts) do
+                if not mapping[otherPart] or not mapping[otherPart].Parent then
+                    mapping[otherPart] = make(
+                        "NoCollisionConstraint", constraintFolder, {
+                            Part0 = localPart,
+                            Part1 = otherPart,
+                        }
+                    )
+                end
+            end
+        end
+    end
+
+    local function protect()
+        if not antiflingEnabled or not root or not root.Parent
+            or not humanoid or humanoid.Health <= 0 then
+            return
+        end
+
+        if humanoid.SeatPart or root.Anchored then
+            resetRecovery()
+            return
+        end
+
+        local velocity = root.AssemblyLinearVelocity
+        local horizontal = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+
+        local extreme = horizontal > CONFIG.MaxHorizontalSpeed
+            or velocity.Y > CONFIG.MaxUpwardSpeed
+            or root.AssemblyAngularVelocity.Magnitude > CONFIG.MaxAngularSpeed
+
+        local now = os.clock()
+
+        if extreme then
+            if safeCFrame and now - safeTime <= CONFIG.SafePositionAge
+                and (root.Position - safeCFrame.Position).Magnitude
+                    <= CONFIG.MaxRecoveryDistance then
+                root.CFrame = safeCFrame
+            end
+
+            root.AssemblyLinearVelocity = Vector3.new(
+                0, math.clamp(velocity.Y, -60, 0), 0
+            )
+            root.AssemblyAngularVelocity = Vector3.zero
+
+            resetRecovery()
+            recoveryUntil = now + 0.35
+
+        elseif now >= recoveryUntil
+            and humanoid.FloorMaterial ~= Enum.Material.Air
+            and horizontal < CONFIG.MaxHorizontalSpeed * 0.5
+            and math.abs(velocity.Y) < 15
+            and root.AssemblyAngularVelocity.Magnitude < 8 then
+
+            safeCFrame, safeTime = root.CFrame, now
+        end
+    end
+
+    connect(RunService.PreSimulation, function(dt)
+        if not antiflingEnabled or not character or not character.Parent then
+            return
+        end
+
+        humanoid = character:FindFirstChildOfClass("Humanoid")
+        root = character:FindFirstChild("HumanoidRootPart")
+
+        if not humanoid or not root or humanoid.Health <= 0 then
+            if next(pairsByPart) then clearConstraints() end
+            resetRecovery()
+            return
+        end
+
+        scanClock = scanClock + dt
+
+        if scanClock >= CONFIG.ScanInterval then
+            scanClock = 0
+            updateConstraints()
+        end
+
+        protect()
+    end)
+
+    connect(RunService.PostSimulation, protect)
+    setEnabled(false)
+end
+-- Logo HZ, animación de colores y movimiento.
+
+local launcher = button(
+    surface, "HZ", UDim2.fromOffset(24, 100),
+    UDim2.fromOffset(58, 58)
+)
+launcher.Name = "HZLauncher"
+launcher.Visible = false
+launcher.AutoButtonColor = false
+launcher.Font = Enum.Font.GothamBold
+launcher.TextSize = 21
+launcher.ZIndex = 5
+launcher.BackgroundTransparency = 0.08
+
+gradientBorder(launcher, 2.2, 0.06)
+
+local COLOR_CYCLE_SECONDS = 10
+local TAU = math.pi * 2
+local neutral = Color3.new(1, 1, 1)
+local colorClock = 0
+
+local function paletteColor(phase)
+    local hue = (0.90 + 0.18 * math.sin(phase * TAU)) % 1
+
+    return Color3.fromHSV(
+        hue,
+        0.72 + 0.06 * math.cos(phase * TAU),
+        1
+    )
+end
+
+local function paintColors(phase)
+    local a = paletteColor(phase)
+    local b = paletteColor(phase + 0.25)
+    local c = paletteColor(phase + 0.5)
+
+    local sequence = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, a),
+        ColorSequenceKeypoint.new(0.25, paletteColor(phase + 0.125)),
+        ColorSequenceKeypoint.new(0.5, b),
+        ColorSequenceKeypoint.new(0.75, paletteColor(phase + 0.375)),
+        ColorSequenceKeypoint.new(1, c),
+    })
+
+    for _, gradient in ipairs(gradients) do
+        gradient.Color = sequence
+        gradient.Rotation = 25 + phase * 360
+    end
+
+    accentGradient.Color = sequence
+    accentColor = a:Lerp(neutral, 0.16)
+    selectedBackground = dark:Lerp(a, 0.32)
+
+    window.BackgroundColor3 = dark:Lerp(b, 0.10)
+    sidebar.BackgroundColor3 = dark:Lerp(c, 0.13)
+
+    logo.TextColor3 = accentColor
+    close.TextColor3 = accentColor
+    eyebrow.TextColor3 = accentColor
+    colorButton.TextColor3 = accentColor
+
+    launcher.BackgroundColor3 = dark:Lerp(b, 0.16)
+    launcher.TextColor3 = a:Lerp(neutral, 0.25)
+
+    mainScroll.ScrollBarImageColor3 = accentColor
+    othersScroll.ScrollBarImageColor3 = accentColor
+
+    local tab = tabs[selectedTab]
+    if tab then
+        tab.TextColor3 = accentColor
+        tab.BackgroundColor3 = selectedBackground
+    end
+
+    refreshProtection()
+end
+
+paintColors(0)
+
+connect(RunService.RenderStepped, function(dt)
+    if not animatedColors then return end
+
+    colorClock = (
+        colorClock + math.min(dt, 1 / 15) / COLOR_CYCLE_SECONDS
+    ) % 1
+
+    paintColors(colorClock)
+end)
+
+local minimized = false
+local launcherPlaced = false
+
+local function clampLauncher(x, y)
+    local bounds = surface.AbsoluteSize
+
+    launcher.Position = UDim2.fromOffset(
+        math.clamp(x, 6, math.max(6, bounds.X - 64)),
+        math.clamp(y, 6, math.max(6, bounds.Y - 64))
+    )
+end
+
+local function clampWindow(x, y)
+    local bounds = surface.AbsoluteSize
+
+    window.Position = UDim2.fromOffset(
+        math.clamp(x, 0, math.max(0, bounds.X - 700 * scale.Scale)),
+        math.clamp(y, 0, math.max(0, bounds.Y - 410 * scale.Scale))
+    )
+end
+
+local function resize(center)
+    local bounds = surface.AbsoluteSize
+    if bounds.X < 1 or bounds.Y < 1 then return end
+
+    scale.Scale = math.max(0.05, math.min(
+        1,
+        (bounds.X - 20) / 700,
+        (bounds.Y - 20) / 410
+    ))
+
+    if center then
+        clampWindow(
+            (bounds.X - 700 * scale.Scale) / 2,
+            (bounds.Y - 410 * scale.Scale) / 2
+        )
+    else
+        clampWindow(
+            window.Position.X.Offset,
+            window.Position.Y.Offset
+        )
+    end
+
+    clampLauncher(
+        launcher.Position.X.Offset,
+        launcher.Position.Y.Offset
+    )
+end
+
+local function toggleMinimize()
+    minimized = not minimized
+
+    if minimized and not launcherPlaced then
+        clampLauncher(
+            window.Position.X.Offset,
+            window.Position.Y.Offset
+        )
+        launcherPlaced = true
+    end
+
+    window.Visible = not minimized
+    launcher.Visible = minimized
+end
+
+local function draggable(handle, target, clamp, onTap)
+    local held, startPoint, startPosition
+    local moved = false
+
+    connect(handle.InputBegan, function(input)
+        if held then return end
+
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+
+            held = input
+            startPoint = input.Position
+            startPosition = target.Position
+            moved = false
+        end
+    end)
+
+    connect(UIS.InputChanged, function(input)
+        if not held then return end
+
+        local mouse = held.UserInputType
+            == Enum.UserInputType.MouseButton1
+
+        if input == held
+            or (mouse and input.UserInputType
+                == Enum.UserInputType.MouseMovement) then
+
+            local delta = input.Position - startPoint
+            if delta.Magnitude > 8 then moved = true end
+
+            if moved then
+                clamp(
+                    startPosition.X.Offset + delta.X,
+                    startPosition.Y.Offset + delta.Y
+                )
+            end
+        end
+    end)
+
+    connect(UIS.InputEnded, function(input)
+        if input ~= held then return end
+
+        local wasMoved = moved
+            or (input.Position - startPoint).Magnitude > 8
+
+        held = nil
+
+        if onTap and not wasMoved then
+            local point = input.Position
+            local origin = handle.AbsolutePosition
+            local size = handle.AbsoluteSize
+
+            if point.X >= origin.X
+                and point.X <= origin.X + size.X
+                and point.Y >= origin.Y
+                and point.Y <= origin.Y + size.Y then
+                onTap()
+            end
+        end
+    end)
+
+    connect(UIS.WindowFocusReleased, function()
+        held = nil
+    end)
+end
+
+draggable(dragArea, window, clampWindow)
+
+draggable(launcher, launcher, clampLauncher, function()
+    if minimized then toggleMinimize() end
+end)
+
+connect(minimize.Activated, toggleMinimize)
+
+connect(close.Activated, function()
+    gui:Destroy()
+end)
+
+connect(surface:GetPropertyChangedSignal("AbsoluteSize"), function()
+    resize(false)
+end)
+
+task.defer(function()
+    if not destroyed and gui.Parent then
+        resize(true)
+    end
+end)
