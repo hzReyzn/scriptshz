@@ -1,5 +1,5 @@
 -- HzReyzn Hub
--- Three selectable themes and animated executable cards.
+-- Four selectable themes and animated executable cards.
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -274,7 +274,7 @@ local settingsPage = make("Frame", content, {
 local animatedColors = true
 local colorButton = button(
     settingsPage, "Animated colors: ON",
-    UDim2.fromOffset(0, 100), UDim2.new(1, -12, 0, 46)
+    UDim2.fromOffset(0, 148), UDim2.new(1, -12, 0, 46)
 )
 connect(colorButton.Activated, function()
     animatedColors = not animatedColors
@@ -284,14 +284,15 @@ end)
 
 local themeOptions = {
     {"Original", Color3.fromRGB(239, 112, 182)},
-    {"Black / Grey", Color3.fromRGB(195, 195, 195)},
+    {"Black / Grey / White", Color3.fromRGB(255, 255, 255)},
     {"RGB", Color3.fromRGB(70, 235, 230)},
+    {"Ocean Theme", Color3.fromRGB(60, 220, 235)},
 }
 for index, option in ipairs(themeOptions) do
     local themeName = option[1]
     local choice = button(settingsPage, themeName,
-        UDim2.fromOffset((index - 1) * 164, 4),
-        UDim2.fromOffset(156, 76))
+        UDim2.fromOffset(((index - 1) % 2) * 249, 4 + math.floor((index - 1) / 2) * 68),
+        UDim2.fromOffset(237, 58))
     choice.TextSize = 13
     choice.Font = Enum.Font.GothamBold
     local edge = make("UIStroke", choice, {
@@ -418,18 +419,9 @@ local function scriptButton(parent, name, url, order)
         BackgroundColor3 = pink, BorderSizePixel = 0,
     })
     round(stripe, 2)
-    local badge = make("Frame", row, {
-        Position = UDim2.new(1, -61, 0.5, -20),
-        Size = UDim2.fromOffset(40, 40),
-        BackgroundColor3 = pink, BorderSizePixel = 0,
-    })
-    round(badge, 12)
-    local play = label(badge, "▶", UDim2.fromOffset(0, 0),
-        UDim2.fromScale(1, 1), 19, white)
-    play.TextXAlignment = Enum.TextXAlignment.Center
     local card = {
         row = row, gradient = cardGradient, stripe = stripe,
-        badge = badge, stroke = cardStroke, hovered = false,
+        stroke = cardStroke, hovered = false,
     }
     table.insert(executableCards, card)
     connect(row.MouseEnter, function()
@@ -445,7 +437,7 @@ local function scriptButton(parent, name, url, order)
 
     local titleLabel = label(
         row, name, UDim2.fromOffset(20, 10),
-        UDim2.new(1, -94, 0, 42), 15
+        UDim2.new(1, -40, 0, 42), 15
     )
     titleLabel.Font = Enum.Font.GothamBold
     titleLabel.TextWrapped = true
@@ -453,7 +445,7 @@ local function scriptButton(parent, name, url, order)
     local stateLabel = label(
         row, "EXECUTE  •  Tap to launch",
         UDim2.fromOffset(20, 61),
-        UDim2.new(1, -94, 0, 20),
+        UDim2.new(1, -40, 0, 20),
         11, muted
     )
 
@@ -764,9 +756,18 @@ local COLOR_CYCLE_SECONDS = 10
 local TAU = math.pi * 2
 local neutral = Color3.new(1, 1, 1)
 local function paletteColor(phase)
-    if theme == "Black / Grey" then
-        local value = 0.58 + 0.34 * (0.5 + 0.5 * math.sin(phase * TAU))
+    if theme == "Black / Grey / White" then
+        local value = 0.42 + 0.58 * (0.5 + 0.5 * math.sin(phase * TAU))
         return Color3.new(value, value, value)
+    elseif theme == "Ocean Theme" then
+        local ocean = {
+            Color3.fromRGB(115, 205, 255),
+            Color3.fromRGB(18, 55, 125),
+            Color3.fromRGB(35, 235, 220),
+        }
+        local position = (phase % 1) * #ocean
+        local index = math.floor(position)
+        return ocean[index + 1]:Lerp(ocean[(index + 1) % #ocean + 1], position - index)
     elseif theme == "RGB" then
         return Color3.fromHSV(phase % 1, 0.85, 1)
     end
@@ -782,13 +783,19 @@ end
 paintColors = function(phase)
     dark = theme == "Original" and Color3.fromRGB(12, 9, 18)
         or Color3.fromRGB(10, 10, 12)
-    if theme == "Black / Grey" then dark = Color3.fromRGB(10, 10, 10) end
+    if theme == "Black / Grey / White" then dark = Color3.fromRGB(10, 10, 10) end
     muted = theme == "Original" and Color3.fromRGB(159, 146, 175)
         or Color3.fromRGB(175, 175, 175)
     panelColor = theme == "Original" and Color3.fromRGB(31, 23, 40)
         or Color3.fromRGB(28, 28, 28)
     idleTabColor = theme == "Original" and Color3.fromRGB(27, 20, 35)
         or Color3.fromRGB(23, 23, 23)
+    if theme == "Ocean Theme" then
+        dark = Color3.fromRGB(5, 15, 35)
+        panelColor = Color3.fromRGB(12, 32, 61)
+        idleTabColor = Color3.fromRGB(9, 25, 48)
+        muted = Color3.fromRGB(166, 204, 227)
+    end
     local a = paletteColor(phase)
     local b = paletteColor(phase + 0.25)
     local c = paletteColor(phase + 0.5)
@@ -801,6 +808,15 @@ paintColors = function(phase)
         ColorSequenceKeypoint.new(1, c),
     })
 
+    if theme == "Black / Grey / White" then
+        sequence = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(65, 65, 65)),
+            ColorSequenceKeypoint.new(0.25, Color3.fromRGB(170, 170, 170)),
+            ColorSequenceKeypoint.new(0.5, neutral),
+            ColorSequenceKeypoint.new(0.75, Color3.fromRGB(170, 170, 170)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(65, 65, 65)),
+        })
+    end
     for _, gradient in ipairs(gradients) do
         gradient.Color = sequence
         gradient.Rotation = 25 + phase * 360
@@ -809,6 +825,11 @@ paintColors = function(phase)
     accentGradient.Color = sequence
     accentColor = a:Lerp(neutral, 0.16)
     selectedBackground = dark:Lerp(a, 0.32)
+    if theme == "Black / Grey / White" then
+        accentColor = neutral
+    elseif theme == "Ocean Theme" then
+        accentColor = a:Lerp(neutral, 0.40)
+    end
 
     window.BackgroundColor3 = dark:Lerp(b, 0.10)
     sidebar.BackgroundColor3 = dark:Lerp(c, 0.13)
@@ -849,7 +870,6 @@ paintColors = function(phase)
             ColorSequenceKeypoint.new(1, dark:Lerp(c, 0.18)),
         })
         card.stripe.BackgroundColor3 = accentColor
-        card.badge.BackgroundColor3 = dark:Lerp(a, 0.6)
     end
 
     refreshProtection()
