@@ -4,6 +4,9 @@
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local refreshExtras = function() end
+local cleanupExtras = function() end
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -87,6 +90,7 @@ end
 
 local gui = make("ScreenGui", playerGui, {
     Name = "HzReyznInterface",
+    IgnoreGuiInset = true,
     ResetOnSpawn = false,
     DisplayOrder = 30,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
@@ -97,6 +101,7 @@ connect(gui.Destroying, function()
     destroyed = true
     cleanupProtection()
     cleanupNDS()
+    cleanupExtras()
 
     for _, connection in ipairs(connections) do
         connection:Disconnect()
@@ -109,8 +114,33 @@ local surface = make("Frame", gui, {
     BackgroundTransparency = 1,
 })
 
+
+local loadStarted=os.clock()
+local loading=make("CanvasGroup",gui,{
+    Name="Loading",Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(8,7,14),
+    BackgroundTransparency=0.12,GroupTransparency=1,ZIndex=50,Active=true,
+})
+local loadTitle=label(loading,"HzReyzn Hub",UDim2.new(0.1,0,0.5,-94),UDim2.new(0.8,0,0,40),30,white)
+loadTitle.TextXAlignment=Enum.TextXAlignment.Center;loadTitle.Font=Enum.Font.GothamBold
+local loadText=label(loading,"Loading",UDim2.new(0.1,0,0.5,-48),UDim2.new(0.8,0,0,28),16,pink)
+loadText.TextXAlignment=Enum.TextXAlignment.Center
+local loadTrack=make("Frame",loading,{
+    Position=UDim2.new(0.25,0,0.5,0),Size=UDim2.new(0.5,0,0,6),
+    BackgroundColor3=Color3.fromRGB(39,28,51),BorderSizePixel=0,
+})
+round(loadTrack,3)
+local loadFill=make("Frame",loadTrack,{
+    Size=UDim2.new(0,0,1,0),BackgroundColor3=pink,BorderSizePixel=0,
+})
+round(loadFill,3)
+make("UIStroke",loadFill,{Color=pink,Thickness=3,Transparency=0.6})
+make("UIGradient",loadFill,{Color=ColorSequence.new(pink,Color3.fromRGB(135,160,255))})
+TweenService:Create(loading,TweenInfo.new(0.5),{GroupTransparency=0}):Play()
+TweenService:Create(loadFill,TweenInfo.new(3.35,Enum.EasingStyle.Linear),{Size=UDim2.fromScale(1,1)}):Play()
+
 local window = make("Frame", surface, {
     Name = "Window",
+    Visible = false,
     Size = UDim2.fromOffset(700, 410),
     BackgroundColor3 = dark,
     BackgroundTransparency = 0.08,
@@ -270,6 +300,9 @@ local ndsScroll = scrollingPage("NDSScroll")
 ndsScroll.Position = UDim2.fromOffset(0, 78)
 ndsScroll.Size = UDim2.fromOffset(498, 234)
 local othersScroll = scrollingPage("OthersScriptsScroll")
+local serverScroll = scrollingPage("ServerScroll")
+serverScroll.Position=UDim2.fromOffset(0,78)
+serverScroll.Size=UDim2.fromOffset(498,234)
 
 local settingsPage = make("Frame", content, {
     Position = UDim2.fromOffset(0, 110),
@@ -379,8 +412,9 @@ local tabs = {}
 local selectedTab = 1
 local pages = {
     {"Shaders", "SHADERS", "More Features soon", ""},
-    {"NDS", "NDS", "NDS", ""},
+    {"NDS", "NDS", "Natural Disaster", ""},
     {"Others scripts", "SCRIPTS (NOT MINE)", "Others scripts", "Tap a script to launch it."},
+    {"Server", "SERVER", "Server", ""},
     {"Settings", "PREFERENCES", "Select Your Theme | More soon", "Customize your interface."},
 }
 
@@ -389,7 +423,8 @@ local function selectTab(index)
     mainScroll.Visible = index == 1
     ndsScroll.Visible = index == 2
     othersScroll.Visible = index == 3
-    settingsPage.Visible = index == 4
+    serverScroll.Visible = index == 4
+    settingsPage.Visible = index == 5
 
     for i, tab in ipairs(tabs) do
         tab.BackgroundColor3 = i == index
@@ -402,7 +437,7 @@ local function selectTab(index)
     title.Text = page[3]
     description.Text = page[4]
     description.Visible = page[4] ~= ""
-    title.TextSize = index == 4 and 23 or 25
+    title.TextSize = index == 5 and 23 or 25
     local top = index == 1 and 78 or 105
     mainScroll.Position = UDim2.fromOffset(0, top)
     mainScroll.Size = UDim2.fromOffset(498, 312 - top)
@@ -411,8 +446,8 @@ end
 for index, page in ipairs(pages) do
     local tab = button(
         sidebar, page[1],
-        UDim2.fromOffset(10, 50 + (index - 1) * 57),
-        UDim2.fromOffset(126, 47)
+        UDim2.fromOffset(10, 45 + (index - 1) * 45),
+        UDim2.fromOffset(126, 39)
     )
     if index == 3 then tab.TextSize = 13 end
     tabs[index] = tab
@@ -760,13 +795,14 @@ end
 -- NDS controls: no map-wide scans; defaults are OFF.
 do
     local flags = {noclip=false, jump=false, float=false, gravity=false, slow=false, speed=false}
-    local values = {gravity=workspace.Gravity, slow=22, speed=16}
+    local values = {gravity=math.floor(workspace.Gravity+0.5), slow=22, speed=16}
     local controls = {}
     local char, hum, root
     local speedHum, oldSpeed, oldGravity
     local jumpConnection
     local characterConnections = {}
     local pendingFloor = false
+    local activeFloor
     local lastJump = 0
     local floatFolder = make("Folder", workspace, {Name="HZLocalFloatFloors"})
     local clipFolder = make("Folder", workspace, {Name="HZLocalWallConstraints"})
@@ -781,6 +817,7 @@ do
 
     local function clearFloors()
         pendingFloor = false
+        activeFloor = nil
         floatFolder:ClearAllChildren()
         table.clear(floorParts)
     end
@@ -816,7 +853,9 @@ do
         elseif key == "speed" then
             if on then applySpeed() else restoreSpeed() end
         elseif key == "noclip" then clearWalls()
-        elseif key == "float" and not on then clearFloors() end
+        elseif key == "float" then
+            if not on then clearFloors() end
+        end
         refreshNDS()
     end
     local function numericValue(text, fallback, low, high)
@@ -831,6 +870,7 @@ do
             BackgroundColor3=panelColor, BorderSizePixel=0,
         })
         round(row,12)
+        gradientBorder(row,1.3,0.22)
         local heading = label(row,name,UDim2.fromOffset(14,0),UDim2.new(1,-98,0,56),15,white)
         heading.Font=Enum.Font.GothamBold
         local toggle=button(row,"OFF",UDim2.new(1,-73,0,11),UDim2.fromOffset(60,34))
@@ -842,7 +882,7 @@ do
             local minus=button(row,"−",UDim2.fromOffset(14,57),UDim2.fromOffset(32,32))
             local field=make("TextBox",row,{
                 Position=UDim2.fromOffset(54,57),Size=UDim2.new(1,-108,0,32),
-                Text=tostring(values[key]),ClearTextOnFocus=false,
+                Text=key=="gravity" and string.format("%d",values[key]) or tostring(values[key]),ClearTextOnFocus=false,
                 BackgroundColor3=dark,TextColor3=white,BorderSizePixel=0,
                 Font=Enum.Font.GothamMedium,TextSize=14,
             })
@@ -851,6 +891,7 @@ do
             entry.field=field;entry.minus=minus;entry.plus=plus
             local function commit(n)
                 values[key]=numericValue(n,values[key],numeric.min,numeric.max)
+                if key=="gravity" then values[key]=math.floor(values[key]+0.5) end
                 field.Text=string.format("%.2f",values[key]):gsub("0+$",""):gsub("%.$","")
                 applyValue(key)
             end
@@ -924,14 +965,13 @@ do
         return hum.HipHeight+root.Size.Y*0.5+(leg and leg.Size.Y or 0)
     end
     local function addFloor()
-        local floor=make("Part",floatFolder,{
-            Name="HZFloatFloor",Size=Vector3.new(8,0.35,8),
-            CFrame=CFrame.new(root.Position-Vector3.new(0,floorDistance()+0.25,0)),
-            Anchored=true,Transparency=1,CanCollide=true,CanTouch=false,CanQuery=true,
-        })
-        floorParts[#floorParts+1]=floor
-        -- Bound persistent platform count for long mobile sessions.
-        if #floorParts>80 then table.remove(floorParts,1):Destroy() end
+        if not activeFloor or not activeFloor.Parent then
+            activeFloor=make("Part",floatFolder,{
+                Name="HZFloatFloor",Size=Vector3.new(18,0.35,18),
+                Anchored=true,Transparency=1,CanCollide=true,CanTouch=false,CanQuery=true,
+            })
+        end
+        activeFloor.CFrame=CFrame.new(root.Position-Vector3.new(0,floorDistance()+0.25,0))
     end
     local function isCharacter(part)
         local parent=part.Parent
@@ -1001,6 +1041,9 @@ do
         if flags.slow then
             local v=root.AssemblyLinearVelocity
             if v.Y < -values.slow then root.AssemblyLinearVelocity=Vector3.new(v.X,-values.slow,v.Z) end
+        end
+        if flags.float and activeFloor and activeFloor.Parent then
+            activeFloor.CFrame=CFrame.new(root.Position.X,activeFloor.Position.Y,root.Position.Z)
         end
         if flags.float and pendingFloor and root.AssemblyLinearVelocity.Y<=1 then
             pendingFloor=false;addFloor()
@@ -1131,6 +1174,8 @@ paintColors = function(phase)
     othersScroll.ScrollBarImageColor3 = accentColor
     ndsScroll.ScrollBarImageColor3 = accentColor
     refreshNDS()
+    refreshExtras()
+    serverScroll.ScrollBarImageColor3=accentColor
 
     minimize.BackgroundColor3 = panelColor
     close.BackgroundColor3 = panelColor
@@ -1326,3 +1371,207 @@ task.defer(function()
     end
 end)
 
+
+
+-- Server tools, themed FPS and welcome card.
+do
+    local TeleportService=game:GetService("TeleportService")
+    local HttpService=game:GetService("HttpService")
+    local serverButtons={}
+    local busy=false
+    local operation=0
+    local activeButton
+    local function action(name,order)
+        local b=button(serverScroll,name,UDim2.fromOffset(0,0),UDim2.new(1,0,0,52))
+        b.LayoutOrder=order;b.Font=Enum.Font.GothamBold
+        gradientBorder(b,1.4,0.18)
+        serverButtons[#serverButtons+1]={button=b,name=name}
+        return b
+    end
+    local rejoin=action("Rejoin",1)
+    local hop=action("Server hop",2)
+    local low=action("Low population",3)
+    local fpsButton=action("FPS",4)
+    local fpsFrame=make("Frame",surface,{
+        Name="HZFPS",Position=UDim2.fromOffset(20,70),Size=UDim2.fromOffset(150,48),
+        BackgroundColor3=panelColor,BorderSizePixel=0,Visible=false,
+    })
+    round(fpsFrame,12)
+    gradientBorder(fpsFrame,1.6,0.1)
+    local fpsText=label(fpsFrame,"FPS: —",UDim2.fromOffset(12,0),UDim2.fromOffset(110,48),18,accentColor)
+    fpsText.Font=Enum.Font.GothamBold;fpsText.Active=true
+    local fpsClose=button(fpsFrame,"×",UDim2.fromOffset(119,8),UDim2.fromOffset(25,30))
+    local fpsConnection
+    local function setFPS(on)
+        if fpsConnection then fpsConnection:Disconnect();fpsConnection=nil end
+        fpsFrame.Visible=on
+        if on then
+            fpsText.Text="FPS: —"
+            local elapsed,frames=0,0
+            fpsConnection=RunService.RenderStepped:Connect(function(dt)
+                frames=frames+1;elapsed=elapsed+dt
+                if elapsed>=0.4 then
+                    fpsText.Text=string.format("FPS: %d",math.floor(frames/elapsed+0.5))
+                    frames=0;elapsed=0
+                end
+            end)
+        end
+    end
+    local function clampFPS(x,y)
+        local size=surface.AbsoluteSize
+        fpsFrame.Position=UDim2.fromOffset(math.clamp(x,0,math.max(0,size.X-150)),
+            math.clamp(y,0,math.max(0,size.Y-48)))
+    end
+    draggable(fpsText,fpsFrame,clampFPS)
+    connect(surface:GetPropertyChangedSignal("AbsoluteSize"),function()
+        clampFPS(fpsFrame.Position.X.Offset,fpsFrame.Position.Y.Offset)
+    end)
+    connect(fpsButton.Activated,function() setFPS(not fpsFrame.Visible) end)
+    connect(fpsClose.Activated,function() setFPS(false) end)
+    cleanupExtras=function()
+        operation=operation+1
+        if fpsConnection then fpsConnection:Disconnect();fpsConnection=nil end
+    end
+    local function resetButtons()
+        if destroyed then return end
+        for _,entry in ipairs(serverButtons) do entry.button.Text=entry.name end
+    end
+    local function fail(message)
+        busy=false
+        if destroyed then return end
+        if activeButton then activeButton.Text=message end
+        local token=operation
+        task.delay(3,function() if not destroyed and token==operation then resetButtons() end end)
+    end
+    connect(TeleportService.TeleportInitFailed,function(p,_,message)
+        if p==player and busy then
+            warn("[HZ Server] "..tostring(message))
+            fail("Teleport failed • Retry")
+        end
+    end)
+    local function start(button,mode)
+        if busy or destroyed then return end
+        busy=true;operation=operation+1
+        local token=operation;activeButton=button
+        resetButtons();button.Text=mode=="rejoin" and "Rejoining..." or "Searching..."
+        task.delay(20,function()
+            if not destroyed and token==operation and busy then
+                operation=operation+1;fail("Timed out • Retry")
+            end
+        end)
+        task.spawn(function()
+            local ok,err=pcall(function()
+                local destination=game.JobId
+                if mode~="rejoin" then
+                    local cursor=nil
+                    local candidates={}
+                    local seen={}
+                    for page=1,5 do
+                        if destroyed or token~=operation then return end
+                        local url="https://games.roblox.com/v1/games/"..game.PlaceId
+                            .."/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true"
+                        if cursor then url=url.."&cursor="..HttpService:UrlEncode(cursor) end
+                        local result=HttpService:JSONDecode(game:HttpGet(url))
+                        if destroyed or token~=operation then return end
+                        if type(result.data)~="table" then error("Invalid server list") end
+                        for _,entry in ipairs(result.data) do
+                            if type(entry.id)=="string" and entry.id~=game.JobId and not seen[entry.id]
+                                and type(entry.playing)=="number" and type(entry.maxPlayers)=="number"
+                                and entry.playing<entry.maxPlayers then
+                                candidates[#candidates+1]=entry;seen[entry.id]=true
+                            end
+                        end
+                        if #candidates>0 then break end
+                        cursor=result.nextPageCursor
+                        if type(cursor)~="string" or cursor=="" then break end
+                        task.wait(0.25)
+                    end
+                    if #candidates==0 then
+                        fail("No available server");return
+                    end
+                    if mode=="low" then
+                        table.sort(candidates,function(a,b) return a.playing<b.playing end)
+                        destination=candidates[1].id
+                    else destination=candidates[math.random(1,#candidates)].id end
+                end
+                if destroyed or token~=operation or not busy then return end
+                button.Text="Connecting..."
+                if destination=="" then TeleportService:Teleport(game.PlaceId,player)
+                else TeleportService:TeleportToPlaceInstance(game.PlaceId,destination,player) end
+            end)
+            if not ok and not destroyed and token==operation then
+                warn("[HZ Server] "..tostring(err))
+                fail("Connection failed • Retry")
+            end
+        end)
+    end
+    connect(rejoin.Activated,function() start(rejoin,"rejoin") end)
+    connect(hop.Activated,function() start(hop,"hop") end)
+    connect(low.Activated,function() start(low,"low") end)
+
+    local toast=make("CanvasGroup",gui,{
+        Name="Welcome",AnchorPoint=Vector2.new(1,1),Position=UDim2.new(1,450,1,-20),
+        Size=UDim2.fromOffset(400,132),BackgroundColor3=dark,BorderSizePixel=0,
+        GroupTransparency=1,Visible=false,ZIndex=40,
+    })
+    round(toast,16)
+    local toastScale=make("UIScale",toast,{Scale=1})
+    local edge=make("UIStroke",toast,{Thickness=1.5,Color=accentColor})
+    local avatar=make("Frame",toast,{Position=UDim2.fromOffset(16,22),Size=UDim2.fromOffset(64,64),
+        BackgroundColor3=panelColor,BorderSizePixel=0})
+    round(avatar,14)
+    local hz=label(avatar,"HZ",UDim2.fromScale(0,0),UDim2.fromScale(1,1),25,accentColor)
+    hz.TextXAlignment=Enum.TextXAlignment.Center;hz.Font=Enum.Font.GothamBold
+    label(toast,"Welcome",UDim2.fromOffset(94,15),UDim2.fromOffset(245,24),19,white)
+    local brand=label(toast,"HZREYZN HUB",UDim2.fromOffset(94,42),UDim2.fromOffset(265,21),13,accentColor)
+    local message=label(toast,"¡HzReyzn Hub Loaded without errors!",UDim2.fromOffset(94,65),
+        UDim2.fromOffset(280,36),12,white)
+    message.TextWrapped=true
+    local timerTrack=make("Frame",toast,{Position=UDim2.fromOffset(16,114),Size=UDim2.new(1,-32,0,4),
+        BackgroundColor3=panelColor,BorderSizePixel=0})
+    round(timerTrack,2)
+    local timer=make("Frame",timerTrack,{Size=UDim2.fromScale(1,1),BackgroundColor3=accentColor,BorderSizePixel=0})
+    round(timer,2)
+    local dismiss=button(toast,"×",UDim2.new(1,-35,0,9),UDim2.fromOffset(26,26))
+    local leaving=false
+    local function dismissToast()
+        if leaving or destroyed or not toast.Parent then return end
+        leaving=true
+        TweenService:Create(toast,TweenInfo.new(0.8,Enum.EasingStyle.Quart,Enum.EasingDirection.InOut),
+            {Position=UDim2.new(1,450,1,-20),GroupTransparency=1}):Play()
+        task.delay(0.8,function() if toast.Parent then toast.Visible=false end end)
+    end
+    connect(dismiss.Activated,dismissToast)
+    refreshExtras=function()
+        fpsFrame.BackgroundColor3=panelColor;fpsText.TextColor3=accentColor
+        fpsClose.BackgroundColor3=idleTabColor;fpsClose.TextColor3=accentColor
+        for _,entry in ipairs(serverButtons) do
+            entry.button.BackgroundColor3=selectedBackground;entry.button.TextColor3=accentColor
+        end
+        toast.BackgroundColor3=dark;edge.Color=accentColor
+        avatar.BackgroundColor3=selectedBackground;hz.TextColor3=accentColor
+        brand.TextColor3=accentColor;timer.BackgroundColor3=accentColor
+        timerTrack.BackgroundColor3=panelColor
+        dismiss.BackgroundColor3=panelColor;dismiss.TextColor3=accentColor
+    end
+    refreshExtras()
+    task.spawn(function()
+        -- Four seconds total, including the final fade.
+        local remaining=3.35-(os.clock()-loadStarted)
+        if remaining>0 then task.wait(remaining) end
+        if destroyed then return end
+        TweenService:Create(loading,TweenInfo.new(0.65,Enum.EasingStyle.Sine),
+            {GroupTransparency=1}):Play()
+        task.wait(0.65)
+        if destroyed then return end
+        loading:Destroy()
+        window.Visible=true
+        toastScale.Scale=math.min(1,math.max(0.1,(surface.AbsoluteSize.X-24)/400))
+        toast.Visible=true
+        TweenService:Create(toast,TweenInfo.new(0.6,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),
+            {Position=UDim2.new(1,-16,1,-20),GroupTransparency=0}):Play()
+        TweenService:Create(timer,TweenInfo.new(5,Enum.EasingStyle.Linear),{Size=UDim2.fromScale(0,1)}):Play()
+        task.wait(4.2)
+        dismissToast()
+    end)
+end
