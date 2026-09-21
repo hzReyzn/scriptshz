@@ -1,5 +1,5 @@
 -- HzReyzn Hub
--- Pega las tres partes juntas antes de ejecutar.
+-- Three selectable themes and animated executable cards.
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -44,6 +44,13 @@ local pink = Color3.fromRGB(239, 112, 182)
 local dark = Color3.fromRGB(12, 9, 18)
 local accentColor = pink
 local selectedBackground = Color3.fromRGB(68, 36, 78)
+local theme = "Original"
+local themeButtons = {}
+local executableCards = {}
+local paintColors
+local colorClock = 0
+local panelColor = Color3.fromRGB(31, 23, 40)
+local idleTabColor = Color3.fromRGB(27, 20, 35)
 
 local function label(parent, text, position, size, fontSize, color)
     return make("TextLabel", parent, {
@@ -158,12 +165,8 @@ local logo = label(
 logo.Font = Enum.Font.GothamBold
 
 label(
-    header, "HzReyzn Hub", UDim2.fromOffset(72, 13),
+    header, "HzReyzn Hub", UDim2.fromOffset(72, 22),
     UDim2.fromOffset(360, 23), 19
-)
-label(
-    header, "YOUR SPACE. YOUR STYLE.", UDim2.fromOffset(73, 37),
-    UDim2.fromOffset(350, 16), 10, muted
 )
 
 local minimize = button(
@@ -217,7 +220,7 @@ local eyebrow = label(
     UDim2.fromOffset(490, 20), 11, pink
 )
 local title = label(
-    content, "Your controls", UDim2.fromOffset(0, 32),
+    content, "More Features soon", UDim2.fromOffset(0, 32),
     UDim2.fromOffset(490, 34), 25
 )
 title.Font = Enum.Font.GothamBold
@@ -271,7 +274,7 @@ local settingsPage = make("Frame", content, {
 local animatedColors = true
 local colorButton = button(
     settingsPage, "Animated colors: ON",
-    UDim2.fromOffset(0, 15), UDim2.fromOffset(310, 48)
+    UDim2.fromOffset(0, 100), UDim2.new(1, -12, 0, 46)
 )
 connect(colorButton.Activated, function()
     animatedColors = not animatedColors
@@ -279,10 +282,50 @@ connect(colorButton.Activated, function()
         and "Animated colors: ON" or "Animated colors: PAUSED"
 end)
 
+local themeOptions = {
+    {"Original", Color3.fromRGB(239, 112, 182)},
+    {"Black / Grey", Color3.fromRGB(195, 195, 195)},
+    {"RGB", Color3.fromRGB(70, 235, 230)},
+}
+for index, option in ipairs(themeOptions) do
+    local themeName = option[1]
+    local choice = button(settingsPage, themeName,
+        UDim2.fromOffset((index - 1) * 164, 4),
+        UDim2.fromOffset(156, 76))
+    choice.TextSize = 13
+    choice.Font = Enum.Font.GothamBold
+    local edge = make("UIStroke", choice, {
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+        Thickness = 1.5, Color = option[2], Transparency = 0.6,
+    })
+    local swatch = make("Frame", choice, {
+        Position = UDim2.fromOffset(14, 11),
+        Size = UDim2.new(1, -28, 0, 4),
+        BackgroundColor3 = option[2], BorderSizePixel = 0,
+    })
+    round(swatch, 2)
+    if themeName == "RGB" then
+        local rainbow = make("UIGradient", swatch, {
+            Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 100)),
+                ColorSequenceKeypoint.new(0.33, Color3.fromRGB(100, 255, 90)),
+                ColorSequenceKeypoint.new(0.66, Color3.fromRGB(70, 160, 255)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 80, 255)),
+            }),
+        })
+        swatch.BackgroundColor3 = Color3.new(1, 1, 1)
+    end
+    themeButtons[themeName] = {button = choice, edge = edge}
+    connect(choice.Activated, function()
+        theme = themeName
+        if paintColors then paintColors(colorClock) end
+    end)
+end
+
 local antiflingEnabled = false
 local protectionRow = make("Frame", mainScroll, {
     LayoutOrder = 1,
-    Size = UDim2.new(1, 0, 0, 106),
+    Size = UDim2.new(1, 0, 0, 56),
     BackgroundTransparency = 1,
 })
 
@@ -300,14 +343,6 @@ local antiflingStroke = make("UIStroke", antiflingButton, {
     Color = muted,
 })
 
-local note = label(
-    protectionRow,
-    "Player collision and extreme velocity protection.",
-    UDim2.fromOffset(8, 64),
-    UDim2.new(1, -16, 0, 34),
-    12, muted
-)
-note.TextWrapped = true
 
 local function refreshProtection()
     antiflingButton.Text = antiflingEnabled
@@ -315,7 +350,7 @@ local function refreshProtection()
 
     antiflingButton.TextColor3 = antiflingEnabled and accentColor or muted
     antiflingButton.BackgroundColor3 = antiflingEnabled
-        and selectedBackground or Color3.fromRGB(31, 23, 40)
+        and selectedBackground or panelColor
 
     antiflingStroke.Color = antiflingEnabled and accentColor or muted
     antiflingStroke.Transparency = antiflingEnabled and 0.08 or 0.5
@@ -324,9 +359,9 @@ end
 local tabs = {}
 local selectedTab = 1
 local pages = {
-    {"Main", "MAIN", "Your controls", "Manage protection and launch your shaders."},
+    {"Main", "MAIN", "More Features soon", ""},
     {"Others scripts", "SCRIPTS (NOT MINE)", "Others scripts", "Tap a script to launch it."},
-    {"Settings", "PREFERENCES", "Make it yours", "Customize your interface."},
+    {"Settings", "PREFERENCES", "Select Your Theme | More soon", "Customize your interface."},
 }
 
 local function selectTab(index)
@@ -337,7 +372,7 @@ local function selectTab(index)
 
     for i, tab in ipairs(tabs) do
         tab.BackgroundColor3 = i == index
-            and selectedBackground or Color3.fromRGB(27, 20, 35)
+            and selectedBackground or idleTabColor
         tab.TextColor3 = i == index and accentColor or muted
     end
 
@@ -345,6 +380,11 @@ local function selectTab(index)
     eyebrow.Text = page[2]
     title.Text = page[3]
     description.Text = page[4]
+    description.Visible = page[4] ~= ""
+    title.TextSize = index == 3 and 23 or 25
+    local top = index == 1 and 78 or 105
+    mainScroll.Position = UDim2.fromOffset(0, top)
+    mainScroll.Size = UDim2.fromOffset(498, 312 - top)
 end
 
 for index, page in ipairs(pages) do
@@ -368,18 +408,52 @@ local function scriptButton(parent, name, url, order)
     )
     row.Name = name
     row.LayoutOrder = order
+    row.AutoButtonColor = false
+    row.BackgroundTransparency = 0
+    local cardGradient = make("UIGradient", row, {Rotation = 15})
+    local cardStroke = gradientBorder(row, 1.6, 0.15)
+    local stripe = make("Frame", row, {
+        Position = UDim2.fromOffset(0, 15),
+        Size = UDim2.new(0, 4, 1, -30),
+        BackgroundColor3 = pink, BorderSizePixel = 0,
+    })
+    round(stripe, 2)
+    local badge = make("Frame", row, {
+        Position = UDim2.new(1, -61, 0.5, -20),
+        Size = UDim2.fromOffset(40, 40),
+        BackgroundColor3 = pink, BorderSizePixel = 0,
+    })
+    round(badge, 12)
+    local play = label(badge, "▶", UDim2.fromOffset(0, 0),
+        UDim2.fromScale(1, 1), 19, white)
+    play.TextXAlignment = Enum.TextXAlignment.Center
+    local card = {
+        row = row, gradient = cardGradient, stripe = stripe,
+        badge = badge, stroke = cardStroke, hovered = false,
+    }
+    table.insert(executableCards, card)
+    connect(row.MouseEnter, function()
+        card.hovered = true
+        cardStroke.Thickness = 2.4
+        if paintColors then paintColors(colorClock) end
+    end)
+    connect(row.MouseLeave, function()
+        card.hovered = false
+        cardStroke.Thickness = 1.6
+        if paintColors then paintColors(colorClock) end
+    end)
 
     local titleLabel = label(
-        row, name, UDim2.fromOffset(14, 10),
-        UDim2.new(1, -28, 0, 42), 15
+        row, name, UDim2.fromOffset(20, 10),
+        UDim2.new(1, -94, 0, 42), 15
     )
     titleLabel.Font = Enum.Font.GothamBold
     titleLabel.TextWrapped = true
 
     local stateLabel = label(
-        row, "Tap to execute",
-        UDim2.fromOffset(14, 61),
-        UDim2.new(1, -28, 0, 20),
+        row, "EXECUTE  •  Tap to launch",
+        UDim2.fromOffset(20, 61),
+        UDim2.new(1, -94, 0, 20),
         11, muted
     )
 
@@ -689,9 +763,13 @@ gradientBorder(launcher, 2.2, 0.06)
 local COLOR_CYCLE_SECONDS = 10
 local TAU = math.pi * 2
 local neutral = Color3.new(1, 1, 1)
-local colorClock = 0
-
 local function paletteColor(phase)
+    if theme == "Black / Grey" then
+        local value = 0.58 + 0.34 * (0.5 + 0.5 * math.sin(phase * TAU))
+        return Color3.new(value, value, value)
+    elseif theme == "RGB" then
+        return Color3.fromHSV(phase % 1, 0.85, 1)
+    end
     local hue = (0.90 + 0.18 * math.sin(phase * TAU)) % 1
 
     return Color3.fromHSV(
@@ -701,7 +779,16 @@ local function paletteColor(phase)
     )
 end
 
-local function paintColors(phase)
+paintColors = function(phase)
+    dark = theme == "Original" and Color3.fromRGB(12, 9, 18)
+        or Color3.fromRGB(10, 10, 12)
+    if theme == "Black / Grey" then dark = Color3.fromRGB(10, 10, 10) end
+    muted = theme == "Original" and Color3.fromRGB(159, 146, 175)
+        or Color3.fromRGB(175, 175, 175)
+    panelColor = theme == "Original" and Color3.fromRGB(31, 23, 40)
+        or Color3.fromRGB(28, 28, 28)
+    idleTabColor = theme == "Original" and Color3.fromRGB(27, 20, 35)
+        or Color3.fromRGB(23, 23, 23)
     local a = paletteColor(phase)
     local b = paletteColor(phase + 0.25)
     local c = paletteColor(phase + 0.5)
@@ -737,10 +824,32 @@ local function paintColors(phase)
     mainScroll.ScrollBarImageColor3 = accentColor
     othersScroll.ScrollBarImageColor3 = accentColor
 
-    local tab = tabs[selectedTab]
-    if tab then
-        tab.TextColor3 = accentColor
-        tab.BackgroundColor3 = selectedBackground
+    minimize.BackgroundColor3 = panelColor
+    close.BackgroundColor3 = panelColor
+    colorButton.BackgroundColor3 = panelColor
+    description.TextColor3 = muted
+    for index, tab in ipairs(tabs) do
+        tab.TextColor3 = index == selectedTab and accentColor or muted
+        tab.BackgroundColor3 = index == selectedTab
+            and selectedBackground or idleTabColor
+    end
+    for name, entry in pairs(themeButtons) do
+        local active = name == theme
+        entry.button.BackgroundColor3 = active and selectedBackground or panelColor
+        entry.button.TextColor3 = active and accentColor or white
+        entry.edge.Color = active and accentColor or muted
+        entry.edge.Transparency = active and 0.05 or 0.7
+        entry.edge.Thickness = active and 2 or 1
+    end
+    for _, card in ipairs(executableCards) do
+        card.row.BackgroundColor3 = neutral
+        card.gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, dark:Lerp(a, card.hovered and 0.40 or 0.25)),
+            ColorSequenceKeypoint.new(0.55, panelColor),
+            ColorSequenceKeypoint.new(1, dark:Lerp(c, 0.18)),
+        })
+        card.stripe.BackgroundColor3 = accentColor
+        card.badge.BackgroundColor3 = dark:Lerp(a, 0.6)
     end
 
     refreshProtection()
