@@ -1,3 +1,31 @@
+-- Startup errors are displayed on screen for mobile troubleshooting.
+local function reportError(message)
+    warn("[HzReyzn Best Textures] " .. tostring(message))
+    pcall(function()
+        local p = game:GetService("Players").LocalPlayer
+        if not p then return end
+        local pg = p:FindFirstChild("PlayerGui")
+        if not pg then return end
+        local old = pg:FindFirstChild("HZTexturesError")
+        if old then old:Destroy() end
+        local g = Instance.new("ScreenGui")
+        g.Name = "HZTexturesError"
+        g.DisplayOrder = 100
+        g.ResetOnSpawn = false
+        local t = Instance.new("TextButton")
+        t.Size = UDim2.new(0.9, 0, 0, 150)
+        t.Position = UDim2.new(0.05, 0, 0.1, 0)
+        t.BackgroundColor3 = Color3.fromRGB(28, 18, 22)
+        t.TextColor3 = Color3.new(1, 1, 1)
+        t.TextSize = 14
+        t.TextWrapped = true
+        t.Text = "HzReyzn Best Textures — error\n" .. tostring(message) .. "\nTap to close"
+        t.Parent = g
+        g.Parent = pg
+        t.Activated:Connect(function() g:Destroy() end)
+    end)
+end
+local startupOK, startupError = xpcall(function()
 -- HzReyzn Best Textures | client-side material detail and surface footsteps.
 -- Studio: LocalScript in StarterPlayerScripts. No server remotes required.
 -- Official texture IDs: https://create.roblox.com/docs/parts/materials
@@ -17,8 +45,9 @@ local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local MaterialService = game:GetService("MaterialService")
 local player = Players.LocalPlayer
-if not player then return end
-local pg = player:WaitForChild("PlayerGui")
+if not player then error("Run this script on the client after joining a game.") end
+local pg = player:WaitForChild("PlayerGui", 15)
+if not pg then error("PlayerGui was not available after 15 seconds.") end
 local old = pg:FindFirstChild("HZBestTextures")
 if old then old:Destroy() end
 local alive, enabled, footsteps = true, true, true
@@ -87,22 +116,6 @@ local MAPS = {
 }
 local reserved = {Glass=true, Neon=true, ForceField=true, Plastic=true, SmoothPlastic=true}
 local token = tostring(math.floor(os.clock() * 1000000))
-for name, maps in pairs(MAPS) do
-    local material = materialByName[name:lower()]
-    if material and maps[1] ~= "" and not reserved[name] then
-        local variant = Instance.new("MaterialVariant")
-        local ok = pcall(function()
-            variant.Name = "HZDetail_" .. token .. "_" .. name
-            variant.BaseMaterial = material
-            variant.StudsPerTile = (name == "Brick" or name == "WoodPlanks") and 6 or CONFIG.TileSize
-            for i, property in ipairs({"ColorMap", "NormalMap", "MetalnessMap", "RoughnessMap"}) do
-                if maps[i] ~= "" then variant[property] = "rbxassetid://" .. maps[i] end
-            end
-            variant.Parent = MaterialService
-        end)
-        if ok then variants[name] = variant else variant:Destroy() end
-    end
-end
 local aliases = {
     wooden="Wood", timber="Wood", trunk="Wood", bark="Wood", plank="WoodPlanks", planks="WoodPlanks",
     steel="Metal", iron="Metal", aluminum="Metal", aluminium="Metal", metallic="Metal",
@@ -171,7 +184,7 @@ local function apply(part)
     local mat = namedMaterial(part)
     local variant = variants[mat.Name]
     local glass = mat == Enum.Material.Glass
-    if not variant and not glass then return end
+    if not variant and not glass and mat == part.Material then return end
     local state = {material=part.Material, variant=part.MaterialVariant,
         reflectance=part.Reflectance, physics=part.CustomPhysicalProperties,
         appliedMaterial=mat, appliedVariant=variant and variant.Name or ""}
@@ -233,6 +246,34 @@ local textureButton=uiButton("Textures: ON",12,52,276)
 local soundButton=uiButton("Surface footsteps: ON",12,94,276)
 local status=make("TextLabel",frame,{Text="Loading material details...",Position=UDim2.fromOffset(12,139),Size=UDim2.fromOffset(276,40),
     BackgroundTransparency=1,TextColor3=Color3.fromRGB(174,203,214),TextSize=11,TextWrapped=true,Font=Enum.Font.GothamMedium})
+-- Build detail assets only after the controls are visible.
+task.defer(function()
+    if not alive then return end
+for name, maps in pairs(MAPS) do
+    local material = materialByName[name:lower()]
+    if material and maps[1] ~= "" and not reserved[name] then
+        local variant
+        local ok = pcall(function()
+            variant = Instance.new("MaterialVariant")
+            variant.Name = "HZDetail_" .. token .. "_" .. name
+            variant.BaseMaterial = material
+            variant.StudsPerTile = (name == "Brick" or name == "WoodPlanks") and 6 or CONFIG.TileSize
+            for i, property in ipairs({"ColorMap", "NormalMap", "MetalnessMap", "RoughnessMap"}) do
+                if maps[i] ~= "" then variant[property] = "rbxassetid://" .. maps[i] end
+            end
+            variant.Parent = MaterialService
+        end)
+        if ok then variants[name] = variant
+        elseif variant then variant:Destroy() end
+    end
+end
+
+    local count = 0
+    for _ in pairs(variants) do count = count + 1 end
+    if count == 0 then
+        warn("[HZ Textures] Custom materials unavailable; using native material detection.")
+    end
+end)
 local minimized=false
 connect(mini.Activated,function()
     minimized=not minimized
@@ -303,7 +344,7 @@ connect(soundButton.Activated,function()
 end)
 local rayParams=RaycastParams.new()
 rayParams.FilterType=Enum.RaycastFilterType.Exclude
-rayParams.RespectCanCollide=true
+pcall(function() rayParams.RespectCanCollide=true end)
 local scanClock,stepClock,uiClock=0,0,0
 local lastSurface="None"
 connect(RunService.Heartbeat,function(dt)
@@ -387,3 +428,6 @@ connect(gui.Destroying,function()
     table.clear(parts);table.clear(indices)
 end)
 connect(close.Activated,function() gui:Destroy() end)
+
+end, function(err) return debug.traceback(tostring(err), 2) end)
+if not startupOK then reportError(startupError) end
