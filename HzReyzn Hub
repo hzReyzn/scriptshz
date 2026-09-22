@@ -950,11 +950,21 @@ do
 
     local waterObject, waterPad, waterLastY, waterLastSource
     local waterSubject, waterParts, waterPartsAt = nil, {}, 0
+    local areaPad,areaLastY,areaScan=nil,nil,0
+    local areaAssemblies,areaExclusions={},{}
+    local areaOverlap=OverlapParams.new()
+    areaOverlap.FilterType=Enum.RaycastFilterType.Exclude
+    local function clearWaterArea()
+        if areaPad then areaPad:Destroy();areaPad=nil end
+        areaLastY,areaScan=nil,0
+        areaAssemblies,areaExclusions={},{}
+    end
     local waterGroundParams=RaycastParams.new()
     waterGroundParams.FilterType=Enum.RaycastFilterType.Exclude
     waterGroundParams.IgnoreWater=true
     waterGroundParams.RespectCanCollide=true
     local function clearWater()
+        clearWaterArea()
         if waterPad then waterPad:Destroy();waterPad=nil end
         waterLastY,waterLastSource=nil,nil
         waterSubject,waterParts,waterPartsAt=nil,{},0
@@ -1067,7 +1077,7 @@ do
         end
         return false
     end
-    local function updateWaterObject(y,source,feet)
+    local function updateWaterObject(y,source,feet,dt)
         local seed=hum.SeatPart
         if not seed and not hum.Jump and hum:GetState()~=Enum.HumanoidStateType.Jumping then
             waterGroundParams.FilterDescendantsInstances={char,waterPad}
@@ -1111,12 +1121,21 @@ do
             local delta=y-waterLastY
             if delta>0 and delta<=12 then shift=delta end
         end
-        if minY+shift<y and minY>=y-3 then shift=math.max(shift,y-minY) end
+        if minY+shift<y-.15 and minY>=y-3 then shift=math.max(shift,y-minY) end
         if shift>0 then
             local offset=Vector3.new(0,shift,0)
             for assembly in pairs(assemblies) do assembly.CFrame=assembly.CFrame+offset end
             if not assemblies[root.AssemblyRootPart] then root.CFrame=root.CFrame+offset end
             minY=minY+shift
+        end
+        if math.abs(minY-y)<.6 then
+            for assembly in pairs(assemblies) do
+                local v=assembly.AssemblyLinearVelocity
+                local w=assembly.AssemblyAngularVelocity
+                -- Leave high-speed impacts and steering alone.
+                if math.abs(v.Y)<8 then assembly.AssemblyLinearVelocity=Vector3.new(v.X,v.Y*math.exp(-12*math.min(dt,.1)),v.Z) end
+                assembly.AssemblyAngularVelocity=Vector3.new(w.X*math.exp(-6*math.min(dt,.1)),w.Y,w.Z*math.exp(-6*math.min(dt,.1)))
+            end
         end
         waterPad.Size=Vector3.new(math.max(16,maxX-minX+4),.5,math.max(16,maxZ-minZ+4))
         waterPad.CFrame=CFrame.new((minX+maxX)*.5,y-.25,(minZ+maxZ)*.5)
@@ -1125,7 +1144,7 @@ do
         return true
     end
 
-    local function updateWater()
+    local function updateWater(dt)
         if not flags.water then return end
         local y,source=waterSurfaceAt(root.Position)
         if not y then clearWater();return end
@@ -1139,7 +1158,7 @@ do
         local targetY=y -- Fixed separation: 0 studs.
         local leg=char:FindFirstChild("Left Leg")
         local feet=root.Position.Y-(hum.HipHeight+root.Size.Y*0.5+(leg and leg.Size.Y or 0))
-        if updateWaterObject(targetY,source,feet) then return end
+        if updateWaterObject(targetY,source,feet,dt) then return end
         waterPad.Size=Vector3.new(16,.5,16)
         local grounded=waterPad.CanCollide and waterLastY and math.abs(feet-waterLastY)<0.8
             and not hum.Jump and hum:GetState()~=Enum.HumanoidStateType.Jumping
@@ -1159,6 +1178,87 @@ do
         waterPad.CFrame=CFrame.new(root.Position.X,targetY-waterPad.Size.Y*0.5,root.Position.Z)
         waterPad.CanCollide=feet>=targetY-0.7
         waterLastY,waterLastSource=targetY,source
+    end
+
+    local function updateWaterArea(dt)
+        if not flags.water or not waterPad or not waterLastY then clearWaterArea();return end
+        local y=waterLastY
+        if not areaPad then
+            areaPad=make("Part",workspace,{
+                Name="HZWaterArea400",Shape=Enum.PartType.Cylinder,
+                Size=Vector3.new(.5,800,800),Anchored=true,Transparency=1,
+                CanCollide=true,CanTouch=false,CanQuery=false,CastShadow=false,
+                CustomPhysicalProperties=PhysicalProperties.new(1,.1,0,100,100),
+            })
+        end
+        -- Keep one support per ridden object: the area floor excludes the player
+        -- and the connected vehicle/part handled by the original support pad.
+        local excluded={}
+        for _,part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then excluded[part]=true end
+        end
+        for _,part in ipairs(waterParts) do if part.Parent then excluded[part]=true end end
+        for part,c in pairs(areaExclusions) do
+            if not excluded[part] or not part.Parent then c:Destroy();areaExclusions[part]=nil end
+        end
+        for part in pairs(excluded) do
+            if not areaExclusions[part] then
+                areaExclusions[part]=make("NoCollisionConstraint",areaPad,{Part0=areaPad,Part1=part})
+            end
+        end
+        if os.clock()>=areaScan then
+            areaScan=os.clock()+.4;areaAssemblies={}
+            areaOverlap.FilterDescendantsInstances={char,areaPad,waterPad}
+            local seen={}
+            for _,part in ipairs(workspace:GetPartBoundsInRadius(root.Position,400,areaOverlap)) do
+                local assembly=part.AssemblyRootPart
+                if assembly and not assembly.Anchored and not seen[assembly] and not excluded[part] then
+                    seen[assembly]=true
+                    local parts=assembly:GetConnectedParts(true)
+                    table.insert(parts,assembly)
+                    local safe=true
+                    for _,p in ipairs(parts) do
+                        if p.Anchored or waterCharacterPart(p) then safe=false;break end
+                    end
+                    if safe then table.insert(areaAssemblies,{root=assembly,parts=parts}) end
+                end
+            end
+        end
+        local delta=areaLastY and y-areaLastY or 0
+        local damping=math.exp(-12*math.min(dt,.1))
+        local angularDamping=math.exp(-6*math.min(dt,.1))
+        for _,entry in ipairs(areaAssemblies) do
+            local assembly=entry.root
+            if assembly.Parent and not assembly.Anchored and not excluded[assembly] then
+                local bottom=math.huge
+                local inside=false
+                local safe=true
+                for _,part in ipairs(entry.parts) do
+                    if not part.Parent or part.Anchored or excluded[part] or waterCharacterPart(part) then safe=false;break end
+                    if part.AssemblyRootPart~=assembly then safe=false;areaScan=0;break end
+                    if (part.Position-root.Position).Magnitude<=400 then inside=true end
+                    if part.CanCollide then
+                        local cf,half=part.CFrame,part.Size*.5
+                        local extent=math.abs(cf.RightVector.Y)*half.X+math.abs(cf.UpVector.Y)*half.Y+math.abs(cf.LookVector.Y)*half.Z
+                        bottom=math.min(bottom,cf.Y-extent)
+                    end
+                end
+                if safe and inside and bottom<math.huge then
+                    if areaLastY and math.abs(bottom-areaLastY)<1.25 and delta>0 and delta<=12 then
+                        assembly.CFrame=assembly.CFrame+Vector3.new(0,delta,0)
+                        bottom=bottom+delta
+                    end
+                    if math.abs(bottom-y)<.6 then
+                        local v,w=assembly.AssemblyLinearVelocity,assembly.AssemblyAngularVelocity
+                        if math.abs(v.Y)<8 then assembly.AssemblyLinearVelocity=Vector3.new(v.X,v.Y*damping,v.Z) end
+                        assembly.AssemblyAngularVelocity=Vector3.new(w.X*angularDamping,w.Y,w.Z*angularDamping)
+                    end
+                end
+            end
+        end
+        -- Cylinder's axis is X; rotate it upright for a circular 400-stud radius.
+        areaPad.CFrame=CFrame.new(root.Position.X,y-.25,root.Position.Z)*CFrame.Angles(0,0,math.pi*.5)
+        areaLastY=y
     end
 
     local function clearFloors()
@@ -1393,7 +1493,8 @@ do
             pendingFloor=false
             return
         end
-        updateWater()
+        updateWater(dt)
+        updateWaterArea(dt)
         if hum.SeatPart then
             if next(wallPairs) then clearWalls() end
             pendingFloor=false
