@@ -22,7 +22,23 @@ local speed = 50
 local loadingFinished=false
 local gfx = true
 local wakePart, wakeBeams, wakeClock = nil, {}, 0
-local up, down = false, false
+local flightControls
+-- Read the native joystick/keyboard input before projecting onto camera pitch.
+task.spawn(function()
+    local scripts=player:WaitForChild("PlayerScripts",10)
+    local module=scripts and scripts:WaitForChild("PlayerModule",10)
+    if module then
+        local ok,controls=pcall(function() return require(module):GetControls() end)
+        if ok then flightControls=controls end
+    end
+end)
+local protectedRoot, protectedVelocity
+local function restoreFallVelocity()
+    if protectedRoot and protectedRoot.Parent then
+        protectedRoot.AssemblyLinearVelocity=protectedVelocity
+    end
+    protectedRoot,protectedVelocity=nil,nil
+end
 local character, humanoid, root, animator, oldAuto, oldStand
 local flightAttachment, velocityMover, orientationMover
 local tracks, localObjects, emitters, trails = {}, {}, {}, {}
@@ -30,7 +46,7 @@ local trackName, state = nil, "Ready"
 local smoothedVelocity = Vector3.zero
 local takeoffAt, fallAt, clock = 0, nil, 0
 local generation = 0
-local accent = Color3.fromRGB(169,231,255)
+local accent = Color3.fromRGB(75,126,255)
 local function connect(signal, callback, bucket)
     local c=signal:Connect(callback)
     table.insert(bucket or connections,c)
@@ -48,15 +64,20 @@ local function tween(o,props,time)
     t:Play();return t
 end
 local gui=make("ScreenGui",playerGui,{Name="HZFlightStandalone",ResetOnSpawn=false,DisplayOrder=65,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
-local panel=make("CanvasGroup",gui,{Visible=false,GroupTransparency=1,Position=UDim2.new(0.5,-125,0.32,0),Size=UDim2.fromOffset(250,215),BackgroundColor3=Color3.fromRGB(9,20,32),BorderSizePixel=0,ClipsDescendants=true})
+local panel=make("CanvasGroup",gui,{Visible=false,GroupTransparency=1,Position=UDim2.new(0.5,-125,0.32,0),Size=UDim2.fromOffset(250,179),BackgroundColor3=Color3.fromRGB(8,14,35),BorderSizePixel=0,ClipsDescendants=true})
 corner(panel,14)
+make("UIGradient",panel,{Color=ColorSequence.new(Color3.fromRGB(175,204,255),Color3.fromRGB(76,94,153)),Rotation=55})
+local topAccent=make("Frame",panel,{Position=UDim2.fromOffset(18,0),Size=UDim2.new(1,-36,0,2),BackgroundColor3=accent,BorderSizePixel=0})
+make("UIGradient",topAccent,{Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.5,0),NumberSequenceKeypoint.new(1,1)})})
 local border=make("UIStroke",panel,{Color=accent,Thickness=1.7})
 local scale=make("UIScale",panel,{Scale=1})
 local header=make("TextLabel",panel,{Position=UDim2.fromOffset(12,0),Size=UDim2.fromOffset(158,39),BackgroundTransparency=1,Active=true,Text="HzReyzn Fly",TextXAlignment=Enum.TextXAlignment.Left,TextSize=14,Font=Enum.Font.GothamBold,TextColor3=accent})
 local buttons={}
 local function button(parent,text,x,y,w,h)
-    local b=make("TextButton",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),Text=text,Font=Enum.Font.GothamBold,TextSize=12,TextColor3=Color3.fromRGB(238,236,249),BackgroundColor3=Color3.fromRGB(24,47,65),BorderSizePixel=0,AutoButtonColor=true})
+    local b=make("TextButton",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),Text=text,Font=Enum.Font.GothamBold,TextSize=12,TextColor3=Color3.fromRGB(238,236,249),BackgroundColor3=Color3.fromRGB(20,38,83),BorderSizePixel=0,AutoButtonColor=true})
     corner(b,8);table.insert(buttons,b)
+    make("UIStroke",b,{Color=Color3.fromRGB(71,108,197),Thickness=1,Transparency=0.65,ApplyStrokeMode=Enum.ApplyStrokeMode.Border})
+    make("UIGradient",b,{Color=ColorSequence.new(Color3.new(1,1,1),Color3.fromRGB(174,198,242)),Rotation=90})
     local s=make("UIScale",b,{Scale=1})
     connect(b.InputBegan,function(i) if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then tween(s,{Scale=0.95},0.08) end end)
     connect(b.InputEnded,function(i) if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then tween(s,{Scale=1},0.16) end end)
@@ -64,20 +85,18 @@ local function button(parent,text,x,y,w,h)
 end
 local mini=button(panel,"−",178,6,28,27)
 local close=button(panel,"×",213,6,28,27)
-local body=make("Frame",panel,{Position=UDim2.fromOffset(0,39),Size=UDim2.fromOffset(250,176),BackgroundTransparency=1})
+local body=make("Frame",panel,{Position=UDim2.fromOffset(0,39),Size=UDim2.fromOffset(250,140),BackgroundTransparency=1})
 local toggle=button(body,"ON",10,0,230,36)
 local minus=button(body,"−",10,43,35,30)
-local speedBox=make("TextBox",body,{Position=UDim2.fromOffset(50,43),Size=UDim2.fromOffset(150,30),Text="50",ClearTextOnFocus=false,Font=Enum.Font.GothamBold,TextSize=14,TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(14,33,48),BorderSizePixel=0})
+local speedBox=make("TextBox",body,{Position=UDim2.fromOffset(50,43),Size=UDim2.fromOffset(150,30),Text="50",ClearTextOnFocus=false,Font=Enum.Font.GothamBold,TextSize=14,TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(11,24,57),BorderSizePixel=0})
 corner(speedBox,8)
 local plus=button(body,"+",205,43,35,30)
-local upButton=button(body,"↑  UP",10,80,112,33)
-local downButton=button(body,"↓  DOWN",128,80,112,33)
-local gfxButton=button(body,"VFX ON",10,120,230,29)
+local gfxButton=button(body,"VFX ON",10,82,230,30)
 local status=make("TextLabel",body,{Visible=false,BackgroundTransparency=1,Text="Loading"})
-make("TextLabel",body,{Position=UDim2.fromOffset(10,155),Size=UDim2.fromOffset(230,16),BackgroundTransparency=1,Text="Made By hzReyzn",TextSize=10,TextColor3=Color3.fromRGB(153,188,205),Font=Enum.Font.Gotham})
+make("TextLabel",body,{Position=UDim2.fromOffset(10,118),Size=UDim2.fromOffset(230,16),BackgroundTransparency=1,Text="Made By hzReyzn",TextSize=10,TextColor3=Color3.fromRGB(153,188,205),Font=Enum.Font.Gotham})
 local loader=make("CanvasGroup",gui,{
     AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.42),
-    Size=UDim2.fromOffset(278,112),BackgroundColor3=Color3.fromRGB(9,20,32),
+    Size=UDim2.fromOffset(278,112),BackgroundColor3=Color3.fromRGB(8,14,35),
     BorderSizePixel=0,GroupTransparency=1,
 })
 corner(loader,16)
@@ -125,7 +144,7 @@ local resizeTween
 connect(mini.Activated,function()
     minimized=not minimized;mini.Text=minimized and "+" or "−"
     if resizeTween then resizeTween:Cancel() end
-    resizeTween=tween(panel,{Size=UDim2.fromOffset(250,minimized and 39 or 215)},0.25)
+    resizeTween=tween(panel,{Size=UDim2.fromOffset(250,minimized and 39 or 179)},0.25)
 end)
 local function setSpeed(n)
     if not n or n~=n or math.abs(n)==math.huge then n=speed end
@@ -136,9 +155,9 @@ connect(plus.Activated,function() setSpeed(speed+10) end)
 connect(speedBox.FocusLost,function() setSpeed(tonumber(speedBox.Text)) end)
 local function paint()
     border.Color=accent;header.TextColor3=accent
-    toggle.BackgroundColor3=flying and accent:Lerp(Color3.new(0,0,0),0.45) or Color3.fromRGB(24,47,65)
-    for _,e in ipairs(emitters) do e.Color=ColorSequence.new(accent,Color3.new(1,1,1)) end
-    for _,t in ipairs(trails) do t.Color=ColorSequence.new(accent,Color3.new(1,1,1)) end
+    toggle.BackgroundColor3=flying and accent:Lerp(Color3.new(0,0,0),0.45) or Color3.fromRGB(20,38,83)
+    for _,e in ipairs(emitters) do e.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(233,248,255)),ColorSequenceKeypoint.new(0.3,Color3.fromRGB(116,184,255)),ColorSequenceKeypoint.new(1,accent)}) end
+    for _,t in ipairs(trails) do t.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(233,248,255)),ColorSequenceKeypoint.new(0.3,Color3.fromRGB(116,184,255)),ColorSequenceKeypoint.new(1,accent)}) end
 end
 connect(gfxButton.Activated,function()
     gfx=not gfx;gfxButton.Text=gfx and "VFX ON" or "VFX OFF"
@@ -148,18 +167,7 @@ connect(gfxButton.Activated,function()
         for _,beam in ipairs(wakeBeams) do beam.Enabled=false end
     end
 end)
-local held={}
-local function hold(b,key)
-    connect(b.InputBegan,function(i)
-        if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then held[i]=key;if key=="up" then up=true else down=true end end
-    end)
-end
-hold(upButton,"up");hold(downButton,"down")
-connect(UIS.InputEnded,function(i)
-    held[i]=nil;up=false;down=false
-    for _,key in pairs(held) do if key=="up" then up=true else down=true end end
-end)
-connect(UIS.WindowFocusReleased,function() table.clear(held);up=false;down=false;drag=nil end)
+connect(UIS.WindowFocusReleased,function() drag=nil end)
 local function stopTracks()
     for _,t in pairs(tracks) do pcall(function() t:Stop(0.18) end) end
     trackName=nil
@@ -235,14 +243,14 @@ local function own(o) table.insert(localObjects,o);return o end
 local function makeEffects()
     -- Local-only layered white/ice wake inspired by the reference video.
     for i,offset in ipairs({Vector3.new(-1.1,0,0),Vector3.new(1.1,0,0),Vector3.new(0,0.7,0),Vector3.new(0,-0.9,0)}) do
-        local half=i<=2 and 0.46 or 0.72
+        local half=i<=2 and 0.3 or 0.5
         local a=own(make("Attachment",root,{Name="HZIceTrail",Position=offset-Vector3.new(half,0,0)}))
         local b=own(make("Attachment",root,{Name="HZIceTrail",Position=offset+Vector3.new(half,0,0)}))
         local trail=own(make("Trail",root,{
-            Attachment0=a,Attachment1=b,Enabled=false,Lifetime=0.55,
+            Attachment0=a,Attachment1=b,Enabled=false,Lifetime=0.7,
             MinLength=0.05,FaceCamera=true,LightEmission=1,LightInfluence=0,
             WidthScale=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.35,0.8),NumberSequenceKeypoint.new(1,0)}),
-            Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.12),NumberSequenceKeypoint.new(0.5,0.38),NumberSequenceKeypoint.new(1,1)}),
+            Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.22),NumberSequenceKeypoint.new(0.5,0.48),NumberSequenceKeypoint.new(1,1)}),
         }))
         table.insert(trails,trail)
     end
@@ -255,12 +263,12 @@ local function makeEffects()
     }))
     table.insert(emitters,e)
     wakePart=own(make("Part",workspace,{Name="HZLocalIceWake",Size=Vector3.new(0.1,0.1,0.1),Transparency=1,Anchored=true,CanCollide=false,CanTouch=false,CanQuery=false,CastShadow=false}))
-    for i=1,8 do
+    for i=1,10 do
         local a0=make("Attachment",wakePart,{Name="WakeStart"..i})
         local a1=make("Attachment",wakePart,{Name="WakeEnd"..i})
         local beam=make("Beam",wakePart,{
             Attachment0=a0,Attachment1=a1,Enabled=false,FaceCamera=true,Segments=8,
-            Width0=i<=2 and 0.6 or 0.09,Width1=0.015,LightEmission=1,LightInfluence=0,
+            Width0=i<=2 and 0.38 or 0.055,Width1=0.015,LightEmission=1,LightInfluence=0,
             Color=ColorSequence.new(Color3.new(1,1,1),accent),
             Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.15),NumberSequenceKeypoint.new(0.7,0.4),NumberSequenceKeypoint.new(1,1)}),
         })
@@ -280,15 +288,15 @@ local function updateWake(dt)
     wakeClock=wakeClock+dt
     if wakeClock<0.055 then return end
     wakeClock=0
-    local length=math.clamp(magnitude*0.3,8,42)
+    local length=math.clamp(magnitude*0.38,10,55)
     for i,beam in ipairs(wakeBeams) do
-        local angle=i*math.pi/4+clock*1.3
-        local radius=i<=2 and 0.7 or 1.6
+        local angle=i*math.pi/5+clock*0.65
+        local radius=i<=2 and 0.5 or 1.1+0.25*math.sin(clock*3+i)
         local x,y=math.cos(angle)*radius,math.sin(angle)*radius
         beam.Attachment0.Position=Vector3.new(x,y,0.6)
         beam.Attachment1.Position=Vector3.new(x*1.8+math.sin(clock*13+i)*0.6,y*1.8,length*(0.7+i*0.035))
-        beam.CurveSize0=math.sin(clock*9+i)*0.7
-        beam.CurveSize1=math.cos(clock*8+i)*0.5
+        beam.CurveSize0=math.sin(clock*5+i)*1.1
+        beam.CurveSize1=math.cos(clock*4+i)*0.8
     end
 end
 local function releaseMovers()
@@ -309,6 +317,7 @@ local function endFlight(withFall)
     for _,beam in ipairs(wakeBeams) do beam.Enabled=false end
 end
 local function resetCharacter()
+    restoreFallVelocity()
     endFlight(false);stopTracks();releaseMovers();fallAt=nil
     for _,c in ipairs(characterConnections) do c:Disconnect() end
     table.clear(characterConnections)
@@ -316,7 +325,6 @@ local function resetCharacter()
     for _,o in ipairs(localObjects) do o:Destroy() end
     tracks={};localObjects={};emitters={};trails={};wakeBeams={};wakePart=nil;animationsReady=false;currentTrack=nil
     character,humanoid,root,animator=nil,nil,nil,nil
-    up=false;down=false;table.clear(held)
 end
 local function bind(model)
     generation=generation+1;local token=generation
@@ -338,6 +346,7 @@ local function startFlight()
     if dead or not loadingFinished or flying or not humanoid or not root or not root.Parent or humanoid.Health<=0 then return end
     if not animationsReady then status.Text=animationError or "Loading Super Aura Blur";return end
     if humanoid.SeatPart or root.Anchored then status.Text="Stand up to fly";return end
+    restoreFallVelocity()
     fallAt=nil;flying=true;takeoffAt=os.clock();oldAuto=humanoid.AutoRotate;oldStand=humanoid.PlatformStand
     humanoid.AutoRotate=false;humanoid.PlatformStand=true;humanoid:ChangeState(Enum.HumanoidStateType.Physics)
     flightAttachment=make("Attachment",root,{Name="HZFlightControl"})
@@ -354,6 +363,7 @@ connect(player.CharacterAdded,bind)
 connect(player.CharacterRemoving,function() generation=generation+1;resetCharacter() end)
 local uiClock=0
 connect(RunService.PreSimulation,function(dt)
+    restoreFallVelocity()
     if dead or not root or not root.Parent or not humanoid then return end
     clock=clock+dt
     local now=os.clock()
@@ -361,32 +371,37 @@ connect(RunService.PreSimulation,function(dt)
         local camera=workspace.CurrentCamera
         if not camera then return end
         local look=camera.CFrame.LookVector
-        local planar=Vector3.new(look.X,0,look.Z)
-        if planar.Magnitude<0.01 then planar=Vector3.new(root.CFrame.LookVector.X,0,root.CFrame.LookVector.Z) end
-        if planar.Magnitude<0.01 then planar=Vector3.new(0,0,-1) end
-        planar=planar.Unit
-        local right=Vector3.new(-planar.Z,0,planar.X)
-        local move=humanoid.MoveDirection
-        local f=move:Dot(planar);local lateral=move:Dot(right)
-        local vertical=(up and 1 or 0)-(down and 1 or 0)
-        if not UIS:GetFocusedTextBox() then
-            if UIS:IsKeyDown(Enum.KeyCode.Space) or UIS:IsKeyDown(Enum.KeyCode.E) then vertical=vertical+1 end
-            if UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.Q) then vertical=vertical-1 end
+        local cameraRight=camera.CFrame.RightVector
+        local right=Vector3.new(cameraRight.X,0,cameraRight.Z)
+        if right.Magnitude<0.001 then right=Vector3.xAxis end
+        right=right.Unit
+        local planar=Vector3.new(right.Z,0,-right.X)
+        local f,lateral=0,0
+        local inputRead=false
+        if flightControls then
+            local ok,move=pcall(function() return flightControls:GetMoveVector() end)
+            if ok and typeof(move)=="Vector3" then f=-move.Z;lateral=move.X;inputRead=true end
         end
-        vertical=math.clamp(vertical,-1,1)
-        local direction=planar*f+right*lateral+Vector3.new(0,vertical,0)
+        if not inputRead then
+            local move=humanoid.MoveDirection
+            f=move:Dot(planar);lateral=move:Dot(right)
+        end
+        if UIS:GetFocusedTextBox() then f=0;lateral=0 end
+        -- Forward follows full camera pitch; releasing the stick holds position.
+        local direction=look*f+right*lateral
         if direction.Magnitude>1 then direction=direction.Unit end
+        local vertical=direction.Y
         local target=direction*speed
         local nextState="Hover"
         if now-takeoffAt<0.3 then nextState="Takeoff";target=Vector3.new(0,12,0)
-        elseif math.abs(vertical)>0.1 then nextState=vertical>0 and "Up" or "Down"
+        elseif math.abs(vertical)>0.35 then nextState=vertical>0 and "Up" or "Down"
         elseif math.abs(f)>0.1 or math.abs(lateral)>0.1 then
             if math.abs(f)>=math.abs(lateral) then nextState=f>0 and "Forward" or "Backward" else nextState=lateral>0 and "Right" or "Left" end
         end
         state=nextState;play(state)
         smoothedVelocity=smoothedVelocity:Lerp(target,1-math.exp(-8*dt))
         velocityMover.VectorVelocity=smoothedVelocity
-        local pitch=-f*math.rad(6)+vertical*math.rad(3)
+        local pitch=-f*math.rad(6)+vertical*math.rad(12)
         local roll=-lateral*math.rad(10)
         orientationMover.CFrame=CFrame.lookAt(Vector3.zero,planar)*CFrame.Angles(pitch,0,roll)
         for _,e in ipairs(emitters) do e.Enabled=gfx;e.Rate=direction.Magnitude>0.1 and 24 or 8 end
@@ -398,6 +413,19 @@ connect(RunService.PreSimulation,function(dt)
     uiClock=uiClock+dt
     if uiClock>0.15 and animationsReady then uiClock=0;status.Text=state..(flying and (" · "..speed) or " · Aura Blur") end
 end)
+-- Same Heartbeat/render protection tested in the NDS Hub; always enabled
+-- while this script is present, including after switching flight OFF.
+connect(RunService.Heartbeat,function()
+    restoreFallVelocity()
+    if dead then return end
+    local model=player.Character
+    local h=model and model:FindFirstChildOfClass("Humanoid")
+    local r=model and model:FindFirstChild("HumanoidRootPart")
+    if not h or not r or h.Health<=0 or r.Anchored or h.SeatPart then return end
+    protectedRoot,protectedVelocity=r,r.AssemblyLinearVelocity
+    r.AssemblyLinearVelocity=Vector3.zero
+end)
+connect(RunService.RenderStepped,restoreFallVelocity)
 connect(gui.Destroying,function()
     if dead then return end
     dead=true;generation=generation+1;resetCharacter()
