@@ -1,10 +1,12 @@
 -- HzReyzn Flight | Super Aura Blur (R15), bundle 19953018242407.
+-- Vertical flight: Super Saiyan Goku DBZ, bundle 2544001591229.
 -- Catalog package IDs verified via Roblox bundle-details API.
 -- Packages are containers, not AnimationTrack IDs. Resolve their Animation children.
 -- Load failures are reported; no substituted/default poses, no client-only Animator.
 local AuraPackages = {
     Idle=120958034769772, Walk=72284671228879, Run=110304356621538,
     Jump=87680156695778, Fall=132479078338047,
+    Climb=91471451627775, Descend=95702349418360,
 }
 local resolvedAura = {}
 local animationsReady, animationError = false, nil
@@ -175,7 +177,7 @@ end
 local currentTrack
 local function play(name)
     local group=({Takeoff="Jump",Hover="Idle",Forward=speed<35 and "Walk" or "Run",
-        Backward="Run",Left="Run",Right="Run",Up="Jump",Down="Fall",Fall="Fall"})[name]
+        Backward="Run",Left="Run",Right="Run",Up="Climb",Down="Descend",Fall="Fall"})[name]
     local t=tracks[group]
     if not t then return end
     t.Looped=name~="Takeoff" and name~="Fall"
@@ -215,7 +217,7 @@ local function loadTracks(token,h,sourceAnimator)
     end
     if h.RigType~=Enum.HumanoidRigType.R15 then return fail("Super Aura Blur requires R15") end
     if not sourceAnimator then return fail("Character Animator missing") end
-    for _,group in ipairs({"Idle","Walk","Run","Jump","Fall"}) do
+    for _,group in ipairs({"Idle","Walk","Run","Jump","Fall","Climb","Descend"}) do
         if dead or token~=generation then discard();return false end
         status.Text="Loading Aura: "..group
         local id,err=resolvePackage(group,AuraPackages[group])
