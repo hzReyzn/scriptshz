@@ -950,6 +950,8 @@ do
 
     local waterObject, waterPad, waterLastY, waterLastSource
     local waterSubject, waterParts, waterPartsAt = nil, {}, 0
+    local parkedWater={}
+    local previousWaterSeat
     local areaPad,areaLastY,areaScan=nil,nil,0
     local areaAssemblies,areaExclusions={},{}
     local areaOverlap=OverlapParams.new()
@@ -964,6 +966,8 @@ do
     waterGroundParams.IgnoreWater=true
     waterGroundParams.RespectCanCollide=true
     local function clearWater()
+        for _,entry in ipairs(parkedWater) do entry.pad:Destroy() end
+        parkedWater={};previousWaterSeat=nil
         clearWaterArea()
         if waterPad then waterPad:Destroy();waterPad=nil end
         waterLastY,waterLastSource=nil,nil
@@ -1084,6 +1088,17 @@ do
             local hit=workspace:Raycast(root.Position,Vector3.new(0,-(root.Position.Y-feet+1.2),0),waterGroundParams)
             if hit and hit.Instance:IsA("BasePart") and not waterCharacterPart(hit.Instance) then seed=hit.Instance end
         end
+        -- An exited vehicle retains its own support even if we stand on its roof.
+        if seed and not hum.SeatPart then
+            for _,entry in ipairs(parkedWater) do
+                for _,part in ipairs(entry.parts) do
+                    if part==seed then
+                        waterSubject,waterParts=nil,{}
+                        return false
+                    end
+                end
+            end
+        end
         if not seed or seed.Anchored then
             waterSubject,waterParts=nil,{}
             return false
@@ -1144,8 +1159,87 @@ do
         return true
     end
 
+    local function retainWaterVehicle()
+        local seat=hum.SeatPart
+        if previousWaterSeat and previousWaterSeat~=seat and waterPad and waterPad.CanCollide then
+            local parts={}
+            for _,part in ipairs(waterParts) do
+                if part.Parent and not part.Anchored and not waterCharacterPart(part) then parts[#parts+1]=part end
+            end
+            if #parts>0 then
+                parkedWater[#parkedWater+1]={pad=waterPad,parts=parts,lastY=waterLastY}
+                -- Transfer the actual support floor, without a frame-long gap.
+                waterPad=nil;waterLastY=nil;waterLastSource=nil
+                waterSubject=nil;waterParts={};waterPartsAt=0;areaScan=0
+            end
+        end
+        previousWaterSeat=seat
+    end
+    local function updateParkedWater(dt)
+        for i=#parkedWater,1,-1 do
+            local entry=parkedWater[i]
+            local minX,minY,minZ=math.huge,math.huge,math.huge
+            local maxX,maxZ=-math.huge,-math.huge
+            local assemblies,excluded={},{}
+            local valid,active,inside=false,false,false
+            for _,part in ipairs(waterParts) do excluded[part]=true end
+            for _,part in ipairs(entry.parts) do
+                if part.Parent and not part.Anchored and not waterCharacterPart(part) then
+                    if excluded[part] then active=true end
+                    if (part.Position-root.Position).Magnitude<=400 then inside=true end
+                    local assembly=part.AssemblyRootPart
+                    if assembly and not assembly.Anchored then assemblies[assembly]=true end
+                    if part.CanCollide then
+                        local cf,h=part.CFrame,part.Size*.5
+                        local e=Vector3.new(
+                            math.abs(cf.RightVector.X)*h.X+math.abs(cf.UpVector.X)*h.Y+math.abs(cf.LookVector.X)*h.Z,
+                            math.abs(cf.RightVector.Y)*h.X+math.abs(cf.UpVector.Y)*h.Y+math.abs(cf.LookVector.Y)*h.Z,
+                            math.abs(cf.RightVector.Z)*h.X+math.abs(cf.UpVector.Z)*h.Y+math.abs(cf.LookVector.Z)*h.Z)
+                        minX=math.min(minX,cf.X-e.X);maxX=math.max(maxX,cf.X+e.X)
+                        minY=math.min(minY,cf.Y-e.Y)
+                        minZ=math.min(minZ,cf.Z-e.Z);maxZ=math.max(maxZ,cf.Z+e.Z);valid=true
+                    end
+                end
+            end
+            if active or not inside or not valid then
+                entry.pad:Destroy();table.remove(parkedWater,i);areaScan=0
+            else
+                local y=waterSurfaceAt(Vector3.new((minX+maxX)*.5,minY,(minZ+maxZ)*.5))
+                if not y then entry.pad:Destroy();table.remove(parkedWater,i) else
+                    local delta=entry.lastY and y-entry.lastY or 0
+                    local shift=0
+                    if entry.lastY and math.abs(minY-entry.lastY)<1.5 and delta>0 and delta<=12 then shift=delta end
+                    if minY+shift<y-.15 and minY>=y-3 then shift=math.max(shift,y-minY) end
+                    for assembly in pairs(assemblies) do
+                        -- Do not move an assembly that has acquired another occupant.
+                        local occupied=waterCharacterPart(assembly)
+                        if not occupied then
+                            for _,part in ipairs(assembly:GetConnectedParts(true)) do
+                                if waterCharacterPart(part) then occupied=true;break end
+                            end
+                        end
+                        if not occupied then
+                            if shift>0 then assembly.CFrame=assembly.CFrame+Vector3.new(0,shift,0) end
+                            if math.abs(minY+shift-y)<.7 then
+                                local v,w=assembly.AssemblyLinearVelocity,assembly.AssemblyAngularVelocity
+                                local vertical=math.max(v.Y,0)*math.exp(-12*math.min(dt,.1))
+                                assembly.AssemblyLinearVelocity=Vector3.new(v.X,vertical,v.Z)
+                                local damping=math.exp(-6*math.min(dt,.1))
+                                assembly.AssemblyAngularVelocity=Vector3.new(w.X*damping,w.Y,w.Z*damping)
+                            end
+                        end
+                    end
+                    entry.pad.Size=Vector3.new(math.max(16,maxX-minX+4),.5,math.max(16,maxZ-minZ+4))
+                    entry.pad.CFrame=CFrame.new((minX+maxX)*.5,y-.25,(minZ+maxZ)*.5)
+                    entry.pad.CanCollide=true;entry.lastY=y
+                end
+            end
+        end
+    end
+
     local function updateWater(dt)
         if not flags.water then return end
+        retainWaterVehicle()
         local y,source=waterSurfaceAt(root.Position)
         if not y then clearWater();return end
         if not waterPad then
@@ -1198,6 +1292,9 @@ do
             if part:IsA("BasePart") then excluded[part]=true end
         end
         for _,part in ipairs(waterParts) do if part.Parent then excluded[part]=true end end
+        for _,entry in ipairs(parkedWater) do
+            for _,part in ipairs(entry.parts) do if part.Parent then excluded[part]=true end end
+        end
         for part,c in pairs(areaExclusions) do
             if not excluded[part] or not part.Parent then c:Destroy();areaExclusions[part]=nil end
         end
@@ -1494,6 +1591,7 @@ do
             return
         end
         updateWater(dt)
+        if flags.water then updateParkedWater(dt) end
         updateWaterArea(dt)
         if hum.SeatPart then
             if next(wallPairs) then clearWalls() end
