@@ -1712,8 +1712,12 @@ do
     local avatar=make("Frame",toast,{Position=UDim2.fromOffset(10,10),Size=UDim2.fromOffset(38,38),
         BackgroundColor3=panelColor,BorderSizePixel=0})
     round(avatar,9)
-    local hz=label(avatar,"HZ",UDim2.fromScale(0,0),UDim2.fromScale(1,1),18,accentColor)
-    hz.TextXAlignment=Enum.TextXAlignment.Center;hz.Font=Enum.Font.GothamBold
+    local toastLogo=make("ImageLabel",avatar,{
+        Name="HubLogo",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),
+        Image="rbxassetid://132960411848659",ImageColor3=Color3.new(1,1,1),
+        ScaleType=Enum.ScaleType.Fit,
+    })
+    round(toastLogo,9)
     label(toast,"Welcome",UDim2.fromOffset(58,6),UDim2.fromOffset(220,18),14,white)
     local brand=label(toast,"HZREYZN HUB",UDim2.fromOffset(58,24),UDim2.fromOffset(220,14),10,accentColor)
     local message=label(toast,"¡HzReyzn Hub Loaded without errors!",UDim2.fromOffset(58,39),
@@ -1741,7 +1745,7 @@ do
             entry.button.BackgroundColor3=selectedBackground;entry.button.TextColor3=accentColor
         end
         toast.BackgroundColor3=dark;edge.Color=accentColor
-        avatar.BackgroundColor3=selectedBackground;hz.TextColor3=accentColor
+        avatar.BackgroundColor3=selectedBackground
         brand.TextColor3=accentColor;timer.BackgroundColor3=accentColor
         timerTrack.BackgroundColor3=panelColor
         dismiss.BackgroundColor3=panelColor;dismiss.TextColor3=accentColor
