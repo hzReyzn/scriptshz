@@ -21,7 +21,94 @@ local enabled=false
 local cons={}
 local function connect(signal,fn) local c=signal:Connect(fn);table.insert(cons,c);return c end
 local attachment,mover,boundRoot,hold
+local idleTrack,idleHum,idleAttempt,locomotionIds=nil,nil,0,{}
+local function releaseIdle()
+ if idleTrack then idleTrack:Stop(.15);idleTrack:Destroy() end
+ idleTrack,idleHum=nil,nil;locomotionIds={}
+end
+local function updateIdle(char,h,active)
+ if not active then
+  if idleTrack and idleTrack.IsPlaying then idleTrack:Stop(.15) end
+  return
+ end
+ if idleHum~=h then releaseIdle();idleAttempt=0 end
+ if not idleTrack and os.clock()>=idleAttempt then
+  idleAttempt=os.clock()+2
+  local animate=char:FindFirstChild('Animate')
+  local folder=animate and animate:FindFirstChild('idle')
+  local animator=h:FindFirstChildOfClass('Animator')
+  local chosen,bestWeight=nil,-1
+  if folder then
+   for _,a in ipairs(folder:GetDescendants()) do
+    if a:IsA('Animation') and a.AnimationId~='' then
+     local w=a:FindFirstChild('Weight');local weight=w and w.Value or 1
+     if weight>bestWeight then chosen=a;bestWeight=weight end
+    end
+   end
+  end
+  if chosen and animator then
+   local ok,t=pcall(function() return animator:LoadAnimation(chosen) end)
+   if ok then idleTrack=t;idleHum=h;t.Priority=Enum.AnimationPriority.Movement;t.Looped=true end
+   for _,name in ipairs({'walk','run'}) do
+    local f=animate:FindFirstChild(name)
+    if f then for _,a in ipairs(f:GetDescendants()) do
+     if a:IsA('Animation') then locomotionIds[a.AnimationId]=true end
+    end end
+   end
+  end
+ end
+ if idleTrack then
+  local animator=h:FindFirstChildOfClass('Animator')
+  if animator then for _,t in ipairs(animator:GetPlayingAnimationTracks()) do
+   if t~=idleTrack and t.Animation and locomotionIds[t.Animation.AnimationId] then t:Stop(.12) end
+  end end
+  if not idleTrack.IsPlaying then idleTrack:Play(.18) end
+ end
+end
+local nearby,nextScan={},0
+local overlap=OverlapParams.new();overlap.FilterType=Enum.RaycastFilterType.Exclude
+local function belongsToCharacter(part)
+ local a=part
+ while a and a~=workspace do
+  if a:IsA('Model') and a:FindFirstChildOfClass('Humanoid') then return true end
+  if a:IsA('Tool') then return true end
+  a=a.Parent
+ end
+ return false
+end
+local function dampNearby(char,r,dt)
+ if os.clock()>=nextScan then
+  nextScan=os.clock()+.12;nearby={};overlap.FilterDescendantsInstances={char}
+  local seen={}
+  for _,part in ipairs(workspace:GetPartBoundsInRadius(r.Position,8,overlap)) do
+   local assembly=part.AssemblyRootPart
+   if assembly and not assembly.Anchored and not seen[assembly] then
+    seen[assembly]=true
+    local safe=not belongsToCharacter(assembly)
+    if safe then for _,connected in ipairs(assembly:GetConnectedParts(true)) do
+     if belongsToCharacter(connected) then safe=false;break end
+    end end
+    if safe then table.insert(nearby,{part=part,root=assembly}) end
+   end
+  end
+ end
+ local factor=math.exp(-18*math.clamp(dt,0,.1))
+ for _,entry in ipairs(nearby) do
+  local part,assembly=entry.part,entry.root
+  if part.Parent and assembly.Parent and not assembly.Anchored and not belongsToCharacter(assembly) then
+   local point=part.CFrame:PointToObjectSpace(r.Position)
+   local half=part.Size*.5
+   local nearest=Vector3.new(math.clamp(point.X,-half.X,half.X),math.clamp(point.Y,-half.Y,half.Y),math.clamp(point.Z,-half.Z,half.Z))
+   if (point-nearest).Magnitude<=8 then
+    local v=assembly.AssemblyLinearVelocity
+    assembly.AssemblyLinearVelocity=Vector3.new(v.X*factor,v.Y,v.Z*factor)
+    assembly.AssemblyAngularVelocity=assembly.AssemblyAngularVelocity*factor
+   end
+  end
+ end
+end
 local function clear()
+ releaseIdle();nearby={};nextScan=0
  if mover then mover:Destroy() end
  if attachment then attachment:Destroy() end
  attachment,mover,boundRoot,hold=nil,nil,nil,nil
@@ -36,7 +123,7 @@ connect(UIS.InputChanged,function(i)
  local d=i.Position-start;frame.Position=UDim2.new(pos.X.Scale,pos.X.Offset+d.X,pos.Y.Scale,pos.Y.Offset+d.Y) end
 end)
 connect(UIS.InputEnded,function(i) if i==drag then drag=nil end end)
-connect(Run.PreSimulation,function()
+connect(Run.PreSimulation,function(dt)
  local char=player.Character
  local h=char and char:FindFirstChildOfClass('Humanoid')
  local r=char and char:FindFirstChild('HumanoidRootPart')
@@ -53,9 +140,11 @@ connect(Run.PreSimulation,function()
  local state=h:GetState()
  local grounded=h.FloorMaterial~=Enum.Material.Air and not h.Jump and state~=Enum.HumanoidStateType.Jumping and state~=Enum.HumanoidStateType.Freefall
  mover.Enabled=grounded
- if not grounded then hold=nil;return end
+ if not grounded then hold=nil;updateIdle(char,h,false);dampNearby(char,r,dt);return end
  mover.MaxForce=math.max(r.AssemblyMass,1)*6000
  local move=h.MoveDirection
+ updateIdle(char,h,move.Magnitude<=.05)
+ dampNearby(char,r,dt)
  local target=Vector3.new(move.X,0,move.Z)*h.WalkSpeed
  if move.Magnitude>.05 then hold=nil else
   hold=hold or r.Position
