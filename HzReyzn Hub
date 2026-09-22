@@ -298,10 +298,59 @@ label(
     sidebar, "WORKSPACE", UDim2.fromOffset(16, 16),
     UDim2.fromOffset(120, 20), 10, muted
 )
-label(
-    sidebar, "HZ / INTERFACE", UDim2.fromOffset(16, 279),
-    UDim2.fromOffset(126, 20), 10, muted
-)
+local refreshProfile = function() end
+do
+    local card=make("Frame",sidebar,{
+        Name="LocalPlayerProfile",Position=UDim2.fromOffset(8,272),
+        Size=UDim2.fromOffset(130,38),BackgroundColor3=panelColor,
+        BackgroundTransparency=0.15,BorderSizePixel=0,
+    })
+    round(card,10)
+    local avatar=make("ImageLabel",card,{
+        Name="Avatar",Position=UDim2.fromOffset(4,4),Size=UDim2.fromOffset(30,30),
+        BackgroundColor3=selectedBackground,BorderSizePixel=0,
+        Image="",ScaleType=Enum.ScaleType.Fit,
+    })
+    round(avatar,15)
+    local fallback=label(avatar,"HZ",UDim2.fromScale(0,0),UDim2.fromScale(1,1),11,accentColor)
+    fallback.TextXAlignment=Enum.TextXAlignment.Center
+    local edge=make("UIStroke",avatar,{Thickness=1,Color=accentColor,Transparency=0.2})
+    local name=label(card,player.DisplayName,UDim2.fromOffset(40,3),UDim2.fromOffset(86,17),11,white)
+    name.Font=Enum.Font.GothamBold
+    name.TextTruncate=Enum.TextTruncate.AtEnd
+    local id=label(card,"ID: "..tostring(player.UserId),UDim2.fromOffset(40,21),UDim2.fromOffset(86,12),8,muted)
+    id.TextScaled=true
+    make("UITextSizeConstraint",id,{MinTextSize=6,MaxTextSize=8})
+    refreshProfile=function()
+        card.BackgroundColor3=panelColor
+        avatar.BackgroundColor3=selectedBackground
+        fallback.TextColor3=accentColor
+        edge.Color=accentColor
+        id.TextColor3=muted
+    end
+    connect(player:GetPropertyChangedSignal("DisplayName"),function()
+        name.Text=player.DisplayName
+    end)
+    connect(avatar:GetPropertyChangedSignal("IsLoaded"),function()
+        fallback.Visible=not avatar.IsLoaded
+    end)
+    task.defer(function()
+        for attempt=1,3 do
+            if destroyed or not avatar.Parent then return end
+            local ok,url,ready=pcall(function()
+                return Players:GetUserThumbnailAsync(player.UserId,
+                    Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size100x100)
+            end)
+            if destroyed or not avatar.Parent then return end
+            if ok and ready and type(url)=="string" and url~="" then
+                avatar.Image=url
+                fallback.Visible=not avatar.IsLoaded
+                return
+            end
+            if attempt<3 then task.wait(1) end
+        end
+    end)
+end
 
 local content = make("Frame", body, {
     Position = UDim2.fromOffset(180, 10),
@@ -1234,6 +1283,7 @@ paintColors = function(phase)
     othersScroll.ScrollBarImageColor3 = accentColor
     ndsScroll.ScrollBarImageColor3 = accentColor
     refreshNDS()
+    refreshProfile()
     refreshExtras()
     serverScroll.ScrollBarImageColor3=accentColor
 
