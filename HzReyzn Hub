@@ -949,6 +949,7 @@ do
 
 
     local waterObject, waterPad, waterLastY, waterLastSource
+    local waterSubject, waterParts, waterPartsAt = nil, {}, 0
     local waterGroundParams=RaycastParams.new()
     waterGroundParams.FilterType=Enum.RaycastFilterType.Exclude
     waterGroundParams.IgnoreWater=true
@@ -956,6 +957,7 @@ do
     local function clearWater()
         if waterPad then waterPad:Destroy();waterPad=nil end
         waterLastY,waterLastSource=nil,nil
+        waterSubject,waterParts,waterPartsAt=nil,{},0
     end
     local waterCandidates, nextWaterScan = {}, 0
     local function waterSurfaceAt(position)
@@ -1023,6 +1025,106 @@ do
         return bestY,bestSource
     end
 
+    -- Collect rigid assemblies and attached wheels/chassis without moving the map.
+    local function waterConnectedParts(seed)
+        local edges={}
+        local scope=seed:FindFirstAncestorOfClass("Model") or workspace
+        if scope==char then scope=workspace end
+        for _,obj in ipairs(scope:GetDescendants()) do
+            if obj:IsA("Constraint") and obj.Enabled then
+                local ok,a,b=pcall(function() return obj.Attachment0,obj.Attachment1 end)
+                local pa=a and a.Parent
+                local pb=b and b.Parent
+                if ok and pa and pb and pa:IsA("BasePart") and pb:IsA("BasePart") then
+                    edges[pa]=edges[pa] or {};table.insert(edges[pa],pb)
+                    edges[pb]=edges[pb] or {};table.insert(edges[pb],pa)
+                end
+            end
+        end
+        local result,seen,queue={}, {}, {seed}
+        local i=1
+        while i<=#queue do
+            local part=queue[i];i=i+1
+            if not seen[part] then
+                seen[part]=true
+                if part.Anchored or #result>=256 then return {} end
+                result[#result+1]=part
+                for _,other in ipairs(part:GetConnectedParts(true)) do
+                    if not seen[other] then queue[#queue+1]=other end
+                end
+                for _,other in ipairs(edges[part] or {}) do
+                    if not seen[other] then queue[#queue+1]=other end
+                end
+            end
+        end
+        return result
+    end
+    local function waterCharacterPart(part)
+        local ancestor=part.Parent
+        while ancestor and ancestor~=workspace do
+            if ancestor:IsA("Model") and ancestor:FindFirstChildOfClass("Humanoid") then return true end
+            ancestor=ancestor.Parent
+        end
+        return false
+    end
+    local function updateWaterObject(y,source,feet)
+        local seed=hum.SeatPart
+        if not seed and not hum.Jump and hum:GetState()~=Enum.HumanoidStateType.Jumping then
+            waterGroundParams.FilterDescendantsInstances={char,waterPad}
+            local hit=workspace:Raycast(root.Position,Vector3.new(0,-(root.Position.Y-feet+1.2),0),waterGroundParams)
+            if hit and hit.Instance:IsA("BasePart") and not waterCharacterPart(hit.Instance) then seed=hit.Instance end
+        end
+        if not seed or seed.Anchored then
+            waterSubject,waterParts=nil,{}
+            return false
+        end
+        if seed~=waterSubject or os.clock()>=waterPartsAt then
+            waterSubject=seed;waterPartsAt=os.clock()+.75
+            waterParts=waterConnectedParts(seed)
+        end
+        local minX,minY,minZ=math.huge,math.huge,math.huge
+        local maxX,maxZ=-math.huge,-math.huge
+        local assemblies={}
+        local valid=false
+        for _,part in ipairs(waterParts) do
+            if not part.Parent or part.Anchored then return false end
+            local assembly=part.AssemblyRootPart
+            if assembly then
+                if assembly.Anchored then return false end
+                assemblies[assembly]=true
+            end
+            if part.CanCollide and not waterCharacterPart(part) then
+                local cf,size=part.CFrame,part.Size*.5
+                local extent=Vector3.new(
+                    math.abs(cf.RightVector.X)*size.X+math.abs(cf.UpVector.X)*size.Y+math.abs(cf.LookVector.X)*size.Z,
+                    math.abs(cf.RightVector.Y)*size.X+math.abs(cf.UpVector.Y)*size.Y+math.abs(cf.LookVector.Y)*size.Z,
+                    math.abs(cf.RightVector.Z)*size.X+math.abs(cf.UpVector.Z)*size.Y+math.abs(cf.LookVector.Z)*size.Z)
+                minX=math.min(minX,cf.X-extent.X);maxX=math.max(maxX,cf.X+extent.X)
+                minZ=math.min(minZ,cf.Z-extent.Z);maxZ=math.max(maxZ,cf.Z+extent.Z)
+                minY=math.min(minY,cf.Y-extent.Y);valid=true
+            end
+        end
+        if not valid or maxX-minX>512 or maxZ-minZ>512 then return false end
+        -- Lift a supported object by the water's rise; preserve horizontal motion.
+        local shift=0
+        if waterLastY and waterPad.CanCollide and math.abs(minY-waterLastY)<1.5 then
+            local delta=y-waterLastY
+            if delta>0 and delta<=12 then shift=delta end
+        end
+        if minY+shift<y and minY>=y-3 then shift=math.max(shift,y-minY) end
+        if shift>0 then
+            local offset=Vector3.new(0,shift,0)
+            for assembly in pairs(assemblies) do assembly.CFrame=assembly.CFrame+offset end
+            if not assemblies[root.AssemblyRootPart] then root.CFrame=root.CFrame+offset end
+            minY=minY+shift
+        end
+        waterPad.Size=Vector3.new(math.max(16,maxX-minX+4),.5,math.max(16,maxZ-minZ+4))
+        waterPad.CFrame=CFrame.new((minX+maxX)*.5,y-.25,(minZ+maxZ)*.5)
+        waterPad.CanCollide=minY>=y-.7
+        waterLastY,waterLastSource=y,source
+        return true
+    end
+
     local function updateWater()
         if not flags.water then return end
         local y,source=waterSurfaceAt(root.Position)
@@ -1037,6 +1139,8 @@ do
         local targetY=y -- Fixed separation: 0 studs.
         local leg=char:FindFirstChild("Left Leg")
         local feet=root.Position.Y-(hum.HipHeight+root.Size.Y*0.5+(leg and leg.Size.Y or 0))
+        if updateWaterObject(targetY,source,feet) then return end
+        waterPad.Size=Vector3.new(16,.5,16)
         local grounded=waterPad.CanCollide and waterLastY and math.abs(feet-waterLastY)<0.8
             and not hum.Jump and hum:GetState()~=Enum.HumanoidStateType.Jumping
             and hum:GetState()~=Enum.HumanoidStateType.Freefall
@@ -1178,7 +1282,7 @@ do
         restoreSpeed();clearWalls();clearFloors();clearWater()
         char=model;hum=nil;root=nil;lastJump=0
     end
-    local function resolveCharacter()
+    local function resolveCharacter(allowSeated)
         if not char or not char.Parent then return false end
         local h=char:FindFirstChildOfClass("Humanoid")
         root=char:FindFirstChild("HumanoidRootPart")
@@ -1193,7 +1297,7 @@ do
                 end)
             end
         end
-        return hum and root and hum.Health>0 and not hum.SeatPart and not root.Anchored
+        return hum and root and hum.Health>0 and (allowSeated or not hum.SeatPart) and not root.Anchored
     end
     connect(player.CharacterAdded,bind)
     connect(player.CharacterRemoving,function(model) if char==model then bind(nil) end end)
@@ -1283,13 +1387,18 @@ do
     connect(RunService.PreSimulation,function(dt)
         restoreVelocity()
         if destroyed then return end
-        if not resolveCharacter() then
+        if not resolveCharacter(true) then
             clearWater()
             if next(wallPairs) then clearWalls() end
             pendingFloor=false
             return
         end
         updateWater()
+        if hum.SeatPart then
+            if next(wallPairs) then clearWalls() end
+            pendingFloor=false
+            return
+        end
         speedClock=speedClock+dt
         if flags.speed and speedClock>=0.15 then speedClock=0;applySpeed() end
         if flags.float and root.AssemblyLinearVelocity.Y > 1 then
