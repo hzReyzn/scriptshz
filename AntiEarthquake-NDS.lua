@@ -21,14 +21,14 @@ local enabled=false
 local cons={}
 local function connect(signal,fn) local c=signal:Connect(fn);table.insert(cons,c);return c end
 local attachment,mover,boundRoot,hold
-local idleTrack,idleHum,idleAttempt,locomotionIds=nil,nil,0,{}
+local idleTrack,idleHum,idleAttempt=nil,nil,0
 local function releaseIdle()
  if idleTrack then idleTrack:Stop(.15);idleTrack:Destroy() end
- idleTrack,idleHum=nil,nil;locomotionIds={}
+ idleTrack,idleHum=nil,nil
 end
 local function updateIdle(char,h,active)
  if not active then
-  if idleTrack and idleTrack.IsPlaying then idleTrack:Stop(.15) end
+  if idleTrack and idleTrack.IsPlaying then idleTrack:Stop(.08) end
   return
  end
  if idleHum~=h then releaseIdle();idleAttempt=0 end
@@ -49,19 +49,11 @@ local function updateIdle(char,h,active)
   if chosen and animator then
    local ok,t=pcall(function() return animator:LoadAnimation(chosen) end)
    if ok then idleTrack=t;idleHum=h;t.Priority=Enum.AnimationPriority.Movement;t.Looped=true end
-   for _,name in ipairs({'walk','run'}) do
-    local f=animate:FindFirstChild(name)
-    if f then for _,a in ipairs(f:GetDescendants()) do
-     if a:IsA('Animation') then locomotionIds[a.AnimationId]=true end
-    end end
-   end
+
   end
  end
  if idleTrack then
-  local animator=h:FindFirstChildOfClass('Animator')
-  if animator then for _,t in ipairs(animator:GetPlayingAnimationTracks()) do
-   if t~=idleTrack and t.Animation and locomotionIds[t.Animation.AnimationId] then t:Stop(.12) end
-  end end
+  -- Overlay only our idle; leave the character's native animation tracks running.
   if not idleTrack.IsPlaying then idleTrack:Play(.18) end
  end
 end
