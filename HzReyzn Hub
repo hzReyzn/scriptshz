@@ -907,14 +907,26 @@ end
 
 -- NDS controls: no map-wide scans; defaults are OFF.
 do
-    local flags = {noclip=false, jump=false, float=false, gravity=false, slow=false, speed=false}
-    local values = {gravity=math.floor(workspace.Gravity+0.5), slow=22, speed=16}
+    local flags = {noclip=false, jump=false, float=false, gravity=false, nofall=false, speed=false}
+    local values = {gravity=math.floor(workspace.Gravity+0.5), speed=16}
     local controls = {}
     local char, hum, root
     local speedHum, oldSpeed, oldGravity
     local jumpConnection
     local characterConnections = {}
     local pendingFloor = false
+    local floorRising = false
+    local savedRoot, savedVelocity
+    local function restoreVelocity()
+        if savedRoot and savedRoot.Parent then savedRoot.AssemblyLinearVelocity = savedVelocity end
+        savedRoot, savedVelocity = nil, nil
+    end
+    local function armFloor()
+        if flags.float and not pendingFloor then
+            pendingFloor = true
+            floorRising = false
+        end
+    end
     local activeFloor
     local lastJump = 0
     local floatFolder = make("Folder", workspace, {Name="HZLocalFloatFloors"})
@@ -930,6 +942,7 @@ do
 
     local function clearFloors()
         pendingFloor = false
+        floorRising = false
         activeFloor = nil
         floatFolder:ClearAllChildren()
         table.clear(floorParts)
@@ -966,6 +979,8 @@ do
         elseif key == "speed" then
             if on then applySpeed() else restoreSpeed() end
         elseif key == "noclip" then clearWalls()
+        elseif key == "nofall" then
+            if not on then restoreVelocity() end
         elseif key == "float" then
             if not on then clearFloors() end
         end
@@ -1030,11 +1045,12 @@ do
     addControl("Inf Jump","jump",3)
     addControl("Float","float",4)
     addControl("Gravity","gravity",5,{step=5,min=0,max=1000})
-    addControl("Slow fall","slow",6,{step=1,min=1,max=150})
+    addControl("No FallDamage","nofall",6)
     addControl("Speed","speed",7,{step=1,min=0,max=300})
     refreshNDS()
 
     local function bind(model)
+        restoreVelocity()
         if jumpConnection then jumpConnection:Disconnect();jumpConnection=nil end
         for _,c in ipairs(characterConnections) do c:Disconnect() end
         table.clear(characterConnections)
@@ -1051,7 +1067,7 @@ do
             hum=h
             if hum then
                 jumpConnection=hum.StateChanged:Connect(function(_,state)
-                    if flags.float and state==Enum.HumanoidStateType.Jumping then pendingFloor=true end
+                    if state==Enum.HumanoidStateType.Jumping then armFloor() end
                     if state==Enum.HumanoidStateType.Dead then clearWalls();clearFloors();restoreSpeed() end
                 end)
             end
@@ -1062,7 +1078,9 @@ do
     connect(player.CharacterRemoving,function(model) if char==model then bind(nil) end end)
     bind(player.Character)
     connect(UIS.JumpRequest,function()
-        if destroyed or UIS:GetFocusedTextBox() or not flags.jump or not resolveCharacter() then return end
+        if destroyed or UIS:GetFocusedTextBox() or not resolveCharacter() then return end
+        armFloor()
+        if not flags.jump then return end
         local now=os.clock()
         if now-lastJump<0.18 then return end
         lastJump=now
@@ -1071,7 +1089,7 @@ do
         local v=root.AssemblyLinearVelocity
         hum:ChangeState(Enum.HumanoidStateType.Jumping)
         root.AssemblyLinearVelocity=Vector3.new(v.X,math.max(velocity,35),v.Z)
-        if flags.float then pendingFloor=true end
+        armFloor()
     end)
     local function floorDistance()
         local leg=char:FindFirstChild("Left Leg")
@@ -1142,8 +1160,8 @@ do
     end
     local scanClock,speedClock=0,0
     connect(RunService.PreSimulation,function(dt)
+        restoreVelocity()
         if destroyed then return end
-        if not (flags.noclip or flags.jump or flags.float or flags.speed or flags.slow) then return end
         if not resolveCharacter() then
             if next(wallPairs) then clearWalls() end
             pendingFloor=false
@@ -1151,22 +1169,31 @@ do
         end
         speedClock=speedClock+dt
         if flags.speed and speedClock>=0.15 then speedClock=0;applySpeed() end
-        if flags.slow then
-            local v=root.AssemblyLinearVelocity
-            if v.Y < -values.slow then root.AssemblyLinearVelocity=Vector3.new(v.X,-values.slow,v.Z) end
+        if flags.float and root.AssemblyLinearVelocity.Y > 1 then
+            armFloor()
+            floorRising = true
         end
         if flags.float and activeFloor and activeFloor.Parent then
             activeFloor.CFrame=CFrame.new(root.Position.X,activeFloor.Position.Y,root.Position.Z)
         end
-        if flags.float and pendingFloor and root.AssemblyLinearVelocity.Y<=1 then
-            pendingFloor=false;addFloor()
+        if flags.float and pendingFloor and floorRising and root.AssemblyLinearVelocity.Y<=1 then
+            pendingFloor=false;floorRising=false;addFloor()
         end
         if flags.noclip then
             scanClock=scanClock+dt
             if scanClock>=0.12 then scanClock=0;scanWalls() end
         end
     end)
+    -- Match the tested Heartbeat/render method without yielding callbacks.
+    connect(RunService.Heartbeat,function()
+        restoreVelocity()
+        if destroyed or not flags.nofall or not resolveCharacter() then return end
+        savedRoot, savedVelocity = root, root.AssemblyLinearVelocity
+        root.AssemblyLinearVelocity = Vector3.zero
+    end)
+    connect(RunService.RenderStepped,restoreVelocity)
     cleanupNDS=function()
+        restoreVelocity()
         for key in pairs(flags) do flags[key]=false end
         if jumpConnection then jumpConnection:Disconnect();jumpConnection=nil end
         for _,c in ipairs(characterConnections) do c:Disconnect() end
