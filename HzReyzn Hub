@@ -11,7 +11,7 @@ local cleanupExtras = function() end
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-for _, name in ipairs({"HzReyznInterface", "HZAntiflingTest"}) do
+for _, name in ipairs({"HzReyznInterface", "HZAntiflingTest", "HZWaterWalkTest"}) do
     local old = playerGui:FindFirstChild(name)
     if old then old:Destroy() end
 end
@@ -907,7 +907,7 @@ end
 
 -- NDS controls: no map-wide scans; defaults are OFF.
 do
-    local flags = {noclip=false, jump=false, float=false, gravity=false, nofall=false, speed=false}
+    local flags = {noclip=false, jump=false, float=false, gravity=false, nofall=false, speed=false, water=false}
     local values = {gravity=math.floor(workspace.Gravity+0.5), speed=16}
     local controls = {}
     local char, hum, root
@@ -939,6 +939,86 @@ do
     local ray = RaycastParams.new()
     ray.FilterType = Enum.RaycastFilterType.Exclude
     ray.RespectCanCollide = true
+
+
+    local waterObject, waterPad, waterLastY, waterLastSource
+    local waterGroundParams=RaycastParams.new()
+    waterGroundParams.FilterType=Enum.RaycastFilterType.Exclude
+    waterGroundParams.IgnoreWater=true
+    waterGroundParams.RespectCanCollide=true
+    local function clearWater()
+        if waterPad then waterPad:Destroy();waterPad=nil end
+        waterLastY,waterLastSource=nil,nil
+    end
+    local function waterSurfaceAt(position)
+        if not waterObject or waterObject.Parent~=workspace then
+            waterObject=workspace:FindFirstChild("WaterLevel")
+        end
+        if not waterObject then return end
+        if waterObject:IsA("NumberValue") or waterObject:IsA("IntValue") then
+            return waterObject.Value,waterObject
+        end
+        if not waterObject:IsA("BasePart") then
+            return
+        end
+        local water=waterObject
+        local mesh=water:FindFirstChildWhichIsA("DataModelMesh")
+        local cf=water.CFrame
+        local localY=water.Size.Y*0.5
+        local origin=cf.Position
+        if mesh then
+            origin=cf:PointToWorldSpace(mesh.Offset)
+            if mesh:IsA("BlockMesh") or
+                (mesh:IsA("SpecialMesh") and mesh.MeshType==Enum.MeshType.Brick) then
+                localY=water.Size.Y*math.abs(mesh.Scale.Y)*0.5
+            else
+                -- File/flat meshes do not expose rendered bounds through Part.Size.
+                -- Use the same mesh origin as the tested script at zero separation.
+                localY=0
+            end
+        end
+        local normal=cf.UpVector
+        if math.abs(normal.Y)<0.95 then
+            return
+        end
+        local top=origin+normal*localY
+        local y=top.Y-(normal.X*(position.X-top.X)+normal.Z*(position.Z-top.Z))/normal.Y
+        return y,water
+    end
+    
+    local function updateWater()
+        if not flags.water then return end
+        local y,source=waterSurfaceAt(root.Position)
+        if not y then clearWater();return end
+        if not waterPad then
+            waterPad=make("Part",workspace,{
+                Name="HZHubWaterSupport",Size=Vector3.new(16,0.5,16),
+                Anchored=true,Transparency=1,CanCollide=false,CanTouch=false,
+                CanQuery=false,CastShadow=false,
+            })
+        end
+        local targetY=y -- Fixed separation: 0 studs.
+        local leg=char:FindFirstChild("Left Leg")
+        local feet=root.Position.Y-(hum.HipHeight+root.Size.Y*0.5+(leg and leg.Size.Y or 0))
+        local grounded=waterPad.CanCollide and waterLastY and math.abs(feet-waterLastY)<0.8
+            and not hum.Jump and hum:GetState()~=Enum.HumanoidStateType.Jumping
+            and hum:GetState()~=Enum.HumanoidStateType.Freefall
+        if grounded and source==waterLastSource then
+            local delta=targetY-waterLastY
+            if math.abs(delta)<=12 then
+                waterGroundParams.FilterDescendantsInstances={char,waterPad}
+                local ground=workspace:Raycast(root.Position,
+                    Vector3.new(0,-(root.Position.Y-feet+0.8),0),waterGroundParams)
+                if not ground then
+                    root.CFrame=root.CFrame+Vector3.new(0,delta,0)
+                    feet=feet+delta
+                end
+            end
+        end
+        waterPad.CFrame=CFrame.new(root.Position.X,targetY-waterPad.Size.Y*0.5,root.Position.Z)
+        waterPad.CanCollide=feet>=targetY-0.7
+        waterLastY,waterLastSource=targetY,source
+    end
 
     local function clearFloors()
         pendingFloor = false
@@ -979,6 +1059,8 @@ do
         elseif key == "speed" then
             if on then applySpeed() else restoreSpeed() end
         elseif key == "noclip" then clearWalls()
+        elseif key == "water" then
+            if not on then clearWater() end
         elseif key == "nofall" then
             if not on then restoreVelocity() end
         elseif key == "float" then
@@ -1041,6 +1123,7 @@ do
             end
         end
     end
+    addControl("WalkOnWater","water",1.5)
     addControl("No collision | Noclip","noclip",2)
     addControl("Inf Jump","jump",3)
     addControl("Float","float",4)
@@ -1054,7 +1137,7 @@ do
         if jumpConnection then jumpConnection:Disconnect();jumpConnection=nil end
         for _,c in ipairs(characterConnections) do c:Disconnect() end
         table.clear(characterConnections)
-        restoreSpeed();clearWalls();clearFloors()
+        restoreSpeed();clearWalls();clearFloors();clearWater()
         char=model;hum=nil;root=nil;lastJump=0
     end
     local function resolveCharacter()
@@ -1113,8 +1196,8 @@ do
         return false
     end
     local function scanWalls()
-        overlap.FilterDescendantsInstances={char,floatFolder,clipFolder}
-        ray.FilterDescendantsInstances={char,floatFolder,clipFolder}
+        overlap.FilterDescendantsInstances={char,floatFolder,clipFolder,waterPad}
+        ray.FilterDescendantsInstances={char,floatFolder,clipFolder,waterPad}
         local protected={}
         local reach=floorDistance()+3
         for _,offset in ipairs({Vector3.zero,Vector3.new(1,0,0),Vector3.new(-1,0,0),Vector3.new(0,0,1),Vector3.new(0,0,-1)}) do
@@ -1163,10 +1246,12 @@ do
         restoreVelocity()
         if destroyed then return end
         if not resolveCharacter() then
+            clearWater()
             if next(wallPairs) then clearWalls() end
             pendingFloor=false
             return
         end
+        updateWater()
         speedClock=speedClock+dt
         if flags.speed and speedClock>=0.15 then speedClock=0;applySpeed() end
         if flags.float and root.AssemblyLinearVelocity.Y > 1 then
@@ -1199,7 +1284,7 @@ do
         for _,c in ipairs(characterConnections) do c:Disconnect() end
         restoreSpeed()
         if oldGravity~=nil then workspace.Gravity=oldGravity;oldGravity=nil end
-        clearWalls();clearFloors()
+        clearWalls();clearFloors();clearWater()
         clipFolder:Destroy();floatFolder:Destroy()
     end
 end
