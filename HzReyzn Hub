@@ -682,6 +682,13 @@ scriptButton(
     2
 )
 
+scriptButton(
+    ndsScroll,
+    "Fly SuperHero",
+    "https://raw.githubusercontent.com/hzReyzn/scriptshz/main/HzReyzn-Flight.lua",
+    -1
+)
+
 local externalScripts = {
     {
         "Super Ring Parts",
