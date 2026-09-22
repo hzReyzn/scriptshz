@@ -1045,7 +1045,7 @@ do
     addControl("Inf Jump","jump",3)
     addControl("Float","float",4)
     addControl("Gravity","gravity",5,{step=5,min=0,max=1000})
-    addControl("No FallDamage","nofall",6)
+    addControl("No FallDamage","nofall",0)
     addControl("Speed","speed",7,{step=1,min=0,max=300})
     refreshNDS()
 
