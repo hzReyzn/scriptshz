@@ -970,7 +970,7 @@ do
                     local named=n:find("flood",1,true) or n=="water" or n=="waterlevel"
                         or n=="floodwater" or parentName:find("flood",1,true)
                     local watery=obj.Material==Enum.Material.Water
-                    if n=="waterlevel" or ((named or watery) and obj.Size.X>=32 and obj.Size.Z>=32) then
+                    if n~="floodlevel" and (n=="waterlevel" or ((named or watery) and obj.Size.X>=32 and obj.Size.Z>=32)) then
                         table.insert(waterCandidates,obj)
                     end
                 end
@@ -1003,6 +1003,21 @@ do
                     local y=top.Y-(normal.X*(position.X-top.X)+normal.Z*(position.Z-top.Z))/normal.Y
                     if not bestY or y>bestY then bestY,bestSource=y,water end
                 end
+            end
+        end
+        -- FloodLevel is a height marker, not the full rendered water footprint.
+        -- Read the live instance every frame so round replacements are handled.
+        local structure=workspace:FindFirstChild("Structure")
+        local flood=structure and structure:FindFirstChild("FloodLevel")
+        if flood then
+            local floodY
+            if flood:IsA("BasePart") then
+                floodY=flood.Position.Y
+            elseif flood:IsA("NumberValue") or flood:IsA("IntValue") then
+                floodY=flood.Value
+            end
+            if floodY and (not bestY or floodY>bestY) then
+                bestY,bestSource=floodY,flood
             end
         end
         return bestY,bestSource
