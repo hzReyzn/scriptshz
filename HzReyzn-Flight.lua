@@ -1,10 +1,13 @@
--- HzReyzn Flight | independent R6/R15 client controller.
--- Custom procedural poses and VFX are LOCAL. Existing Animator tracks may replicate.
--- To replicate custom poses, assign published, rig-compatible animations authorized
--- for the experience below. Never creates a client-only Animator and claims replication.
-local AnimationIds = {
-    R6 = {}, R15 = {}, -- Keys: Takeoff, Hover, Forward, Backward, Left, Right, Up, Down, Fall
+-- HzReyzn Flight | Super Aura Blur (R15), bundle 19953018242407.
+-- Catalog package IDs verified via Roblox bundle-details API.
+-- Packages are containers, not AnimationTrack IDs. Resolve their Animation children.
+-- Load failures are reported; no substituted/default poses, no client-only Animator.
+local AuraPackages = {
+    Idle=120958034769772, Walk=72284671228879, Run=110304356621538,
+    Jump=87680156695778, Fall=132479078338047,
 }
+local resolvedAura = {}
+local animationsReady, animationError = false, nil
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
@@ -20,10 +23,10 @@ local gfx, poseEnabled = true, true
 local up, down = false, false
 local character, humanoid, root, animator, oldAuto, oldStand
 local flightAttachment, velocityMover, orientationMover
-local motors, tracks, localObjects, emitters, trails = {}, {}, {}, {}, {}
+local tracks, localObjects, emitters, trails = {}, {}, {}, {}
 local trackName, state = nil, "Ready"
 local smoothedVelocity = Vector3.zero
-local takeoffAt, fallAt, clock, poseWeight = 0, nil, 0, 0
+local takeoffAt, fallAt, clock = 0, nil, 0
 local generation = 0
 local themes = {Color3.fromRGB(177,95,255),Color3.fromRGB(67,179,255),Color3.fromRGB(68,224,164),Color3.fromRGB(255,99,144)}
 local scales = {1,0.85,1.15}
@@ -72,7 +75,7 @@ local downButton=button(body,"↓  DOWN",128,80,112,33)
 local themeButton=button(body,"COLOR",10,120,70,27)
 local gfxButton=button(body,"GFX ON",87,120,76,27)
 local sizeButton=button(body,"SIZE",170,120,70,27)
-local poseButton=button(body,"POSES ON",10,153,94,26)
+local poseButton=button(body,"ANIM ON",10,153,94,26)
 local status=make("TextLabel",body,{Position=UDim2.fromOffset(109,151),Size=UDim2.fromOffset(132,30),BackgroundTransparency=1,Text="Ready",TextSize=10,TextWrapped=true,TextColor3=Color3.fromRGB(177,170,193),Font=Enum.Font.Gotham})
 make("TextLabel",body,{Position=UDim2.fromOffset(10,181),Size=UDim2.fromOffset(230,15),BackgroundTransparency=1,Text="Joystick / WASD · Space ↑ · Ctrl ↓ · F",TextSize=9,TextColor3=Color3.fromRGB(142,136,157),Font=Enum.Font.Gotham})
 local drag,dragStart,startPos
@@ -108,7 +111,7 @@ end
 connect(themeButton.Activated,function() themeIndex=themeIndex%#themes+1;paint() end)
 connect(sizeButton.Activated,function() scaleIndex=scaleIndex%#scales+1;tween(scale,{Scale=scales[scaleIndex]}) end)
 connect(gfxButton.Activated,function() gfx=not gfx;gfxButton.Text=gfx and "GFX ON" or "GFX OFF" end)
-connect(poseButton.Activated,function() poseEnabled=not poseEnabled;poseButton.Text=poseEnabled and "POSES ON" or "POSES OFF" end)
+connect(poseButton.Activated,function() poseEnabled=not poseEnabled;poseButton.Text=poseEnabled and "POSES ON" or "ANIM OFF" end)
 local held={}
 local function hold(b,key)
     connect(b.InputBegan,function(i)
@@ -125,32 +128,73 @@ local function stopTracks()
     for _,t in pairs(tracks) do pcall(function() t:Stop(0.18) end) end
     trackName=nil
 end
+local currentTrack
 local function play(name)
-    local t=tracks[name]
-    if name==trackName then return end
-    stopTracks();trackName=name
-    if t then pcall(function() t:Play(0.22,1,1) end) end
+    if not poseEnabled then stopTracks();currentTrack=nil;return end
+    local group=({Takeoff="Jump",Hover="Idle",Forward=speed<35 and "Walk" or "Run",
+        Backward="Run",Left="Run",Right="Run",Up="Jump",Down="Fall",Fall="Fall"})[name]
+    local t=tracks[group]
+    if not t then return end
+    t.Looped=name~="Takeoff" and name~="Fall"
+    if currentTrack==t and t.IsPlaying then trackName=name;return end
+    stopTracks();currentTrack=t;trackName=name
+    local ok=pcall(function() t:Play(0.22,1,1) end)
+    if not ok then animationError="Animation playback failed";animationsReady=false end
 end
-local function loadTracks()
-    if not animator then return end
-    local rig=humanoid.RigType==Enum.HumanoidRigType.R6 and "R6" or "R15"
-    local animate=character:FindFirstChild("Animate")
-    local mapping={Takeoff="jump",Hover="swimidle",Forward="swim",Backward="swim",Left="swim",Right="swim",Up="jump",Down="fall",Fall="fall"}
-    for name,group in pairs(mapping) do
-        local id=AnimationIds[rig][name]
-        if not id and animate then
-            local folder=animate:FindFirstChild(group) or animate:FindFirstChild(name=="Takeoff" and "jump" or "idle")
-            local a=folder and folder:FindFirstChildWhichIsA("Animation",true)
-            id=a and a.AnimationId
-        end
-        if id and tostring(id)~="" then
-            local a=Instance.new("Animation")
-            a.AnimationId=tostring(id):match("^%d+$") and ("rbxassetid://"..tostring(id)) or tostring(id)
-            local ok,t=pcall(function() return animator:LoadAnimation(a) end)
-            a:Destroy()
-            if ok then t.Priority=Enum.AnimationPriority.Action;t.Looped=name~="Takeoff" and name~="Fall";tracks[name]=t end
+local function resolvePackage(group,id)
+    if resolvedAura[group] then return resolvedAura[group] end
+    -- Objects are never parented or run. Only read AnimationId, then destroy.
+    local ok,objects=pcall(function() return game:GetObjects("rbxassetid://"..id) end)
+    if not ok or type(objects)~="table" then return nil,"Cannot load "..group.." package" end
+    local found={}
+    for _,object in ipairs(objects) do
+        if object:IsA("Animation") then table.insert(found,object) end
+        for _,child in ipairs(object:GetDescendants()) do
+            if child:IsA("Animation") then table.insert(found,child) end
         end
     end
+    table.sort(found,function(x,y) return x:GetFullName()<y:GetFullName() end)
+    local contentId=found[1] and found[1].AnimationId
+    for _,object in ipairs(objects) do object:Destroy() end
+    if not contentId or contentId=="" then return nil,"No Animation in "..group end
+    resolvedAura[group]=contentId
+    return contentId
+end
+local function loadTracks(token,h,sourceAnimator)
+    local pending={}
+    local function discard()
+        for _,track in pairs(pending) do track:Destroy() end
+    end
+    local function fail(message)
+        discard()
+        if not dead and token==generation then animationError=message;animationsReady=false;status.Text=message end
+        return false
+    end
+    if h.RigType~=Enum.HumanoidRigType.R15 then return fail("Super Aura Blur requires R15") end
+    if not sourceAnimator then return fail("Character Animator missing") end
+    for _,group in ipairs({"Idle","Walk","Run","Jump","Fall"}) do
+        if dead or token~=generation then discard();return false end
+        status.Text="Loading Aura: "..group
+        local id,err=resolvePackage(group,AuraPackages[group])
+        if dead or token~=generation then discard();return false end
+        if not id then return fail(err) end
+        local a=Instance.new("Animation");a.AnimationId=id
+        local ok,t=pcall(function() return sourceAnimator:LoadAnimation(a) end)
+        a:Destroy()
+        if not ok then return fail("Cannot load "..group.." animation") end
+        t.Priority=Enum.AnimationPriority.Action;t.Looped=true;pending[group]=t
+    end
+    local deadline=os.clock()+10
+    while not dead and token==generation do
+        local ready=true
+        for _,t in pairs(pending) do if t.Length<=0 then ready=false;break end end
+        if ready then break end
+        if os.clock()>=deadline then return fail("Aura blocked or loading timed out") end
+        task.wait(0.1)
+    end
+    if dead or token~=generation then discard();return false end
+    tracks=pending;animationsReady=true;animationError=nil;currentTrack=nil
+    return true
 end
 local function own(o) table.insert(localObjects,o);return o end
 local function makeEffects()
@@ -187,10 +231,9 @@ local function resetCharacter()
     endFlight(false);stopTracks();releaseMovers();fallAt=nil
     for _,c in ipairs(characterConnections) do c:Disconnect() end
     table.clear(characterConnections)
-    for _,m in ipairs(motors) do if m.joint.Parent then m.joint.C0=m.base end end
     for _,t in pairs(tracks) do pcall(function() t:Destroy() end) end
     for _,o in ipairs(localObjects) do o:Destroy() end
-    motors={};tracks={};localObjects={};emitters={};trails={};poseWeight=0
+    tracks={};localObjects={};emitters={};trails={};animationsReady=false;currentTrack=nil
     character,humanoid,root,animator=nil,nil,nil,nil
     up=false;down=false;table.clear(held)
 end
@@ -203,18 +246,16 @@ local function bind(model)
         if dead or token~=generation or not h or not r or player.Character~=model then return end
         character,humanoid,root=model,h,r
         animator=h:FindFirstChildOfClass("Animator")
-        for _,j in ipairs(model:GetDescendants()) do
-            if j:IsA("Motor6D") and (j.Name=="RootJoint" or j.Name=="Root" or j.Name=="Waist" or j.Name=="Neck" or j.Name:find("Shoulder") or j.Name:find("Hip")) then table.insert(motors,{joint=j,base=j.C0}) end
-        end
-        loadTracks()
+        if not loadTracks(token,h,animator) then return end
         if dead or token~=generation then return end
         makeEffects()
         connect(h.Died,function() endFlight(false);fallAt=nil end,characterConnections)
-        status.Text="Ready · "..(h.RigType==Enum.HumanoidRigType.R6 and "R6" or "R15")
+        status.Text="Super Aura Blur · ready"
     end)
 end
 local function startFlight()
     if dead or flying or not humanoid or not root or not root.Parent or humanoid.Health<=0 then return end
+    if not animationsReady then status.Text=animationError or "Loading Super Aura Blur";return end
     if humanoid.SeatPart or root.Anchored then status.Text="Stand up to fly";return end
     fallAt=nil;flying=true;takeoffAt=os.clock();oldAuto=humanoid.AutoRotate;oldStand=humanoid.PlatformStand
     humanoid.AutoRotate=false;humanoid.PlatformStand=true;humanoid:ChangeState(Enum.HumanoidStateType.Physics)
@@ -230,24 +271,6 @@ connect(toggle.Activated,toggleFlight)
 connect(UIS.InputBegan,function(i,processed) if not processed and not UIS:GetFocusedTextBox() and i.KeyCode==Enum.KeyCode.F then toggleFlight() end end)
 connect(player.CharacterAdded,bind)
 connect(player.CharacterRemoving,function() generation=generation+1;resetCharacter() end)
-local function poseFor(name,mode,t)
-    local side=name:find("Left") and -1 or 1
-    local wave=math.sin(t*2.6)*3
-    local forward=mode=="Forward";local back=mode=="Backward"
-    local rise=mode=="Up" or mode=="Takeoff"
-    local fall=mode=="Fall" or mode=="Down"
-    if name:find("Shoulder") then
-        local pitch=forward and -75 or (rise and -125 or (back and 25 or (fall and -25 or -12)))
-        local spread=fall and 55 or 25
-        if mode=="Left" and side==-1 or mode=="Right" and side==1 then spread=70;pitch=-35 end
-        return CFrame.Angles(math.rad(pitch+wave),0,math.rad(side*spread))
-    elseif name:find("Hip") then
-        return CFrame.Angles(math.rad((forward and 22 or (rise and -20 or (fall and -12 or 8)))+side*wave),0,math.rad(side*7))
-    elseif name=="Neck" then return CFrame.Angles(math.rad(forward and 18 or (fall and -12 or 0)),0,0)
-    elseif name=="Waist" then return CFrame.Angles(math.rad(forward and -12 or (back and 10 or 0)),0,0)
-    end
-    return CFrame.new()
-end
 local uiClock=0
 connect(RunService.PreSimulation,function(dt)
     if dead or not root or not root.Parent or not humanoid then return end
@@ -282,25 +305,16 @@ connect(RunService.PreSimulation,function(dt)
         state=nextState;play(state)
         smoothedVelocity=smoothedVelocity:Lerp(target,1-math.exp(-8*dt))
         velocityMover.VectorVelocity=smoothedVelocity
-        local pitch=-f*math.rad(24)+vertical*math.rad(8)
-        local roll=-lateral*math.rad(23)
+        local pitch=-f*math.rad(6)+vertical*math.rad(3)
+        local roll=-lateral*math.rad(10)
         orientationMover.CFrame=CFrame.lookAt(Vector3.zero,planar)*CFrame.Angles(pitch,0,roll)
         for _,e in ipairs(emitters) do e.Enabled=gfx;e.Rate=direction.Magnitude>0.1 and 24 or 8 end
         for _,t in ipairs(trails) do t.Enabled=gfx and smoothedVelocity.Magnitude>8 end
     elseif fallAt then
         if now-fallAt>1.2 or humanoid.FloorMaterial~=Enum.Material.Air or humanoid.Health<=0 then fallAt=nil;state="Ready";stopTracks() end
     end
-    local goal=poseEnabled and (flying or fallAt~=nil) and 1 or 0
-    poseWeight=poseWeight+(goal-poseWeight)*(1-math.exp(-10*dt))
-    for _,m in ipairs(motors) do
-        if m.joint.Parent and (goal>0 or poseWeight>0.0001) then
-            local target=m.base*CFrame.new():Lerp(poseFor(m.joint.Name,state,clock),poseWeight)
-            m.joint.C0=m.joint.C0:Lerp(target,1-math.exp(-12*dt))
-            if goal==0 and poseWeight<0.001 then m.joint.C0=m.base end
-        end
-    end
     uiClock=uiClock+dt
-    if uiClock>0.15 then uiClock=0;status.Text=state..(flying and (" · "..speed) or "") end
+    if uiClock>0.15 and animationsReady then uiClock=0;status.Text=state..(flying and (" · "..speed) or " · Aura Blur") end
 end)
 connect(gui.Destroying,function()
     if dead then return end
