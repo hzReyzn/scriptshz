@@ -1,5 +1,6 @@
 -- HzReyzn Water Walk: independent, experimental NDS client test.
--- Detection: horizontal water-named parts, or Terrain water via raycast.
+-- Direct Workspace.WaterLevel tracking; no size, material, or query filters.
+-- File-mesh surface height is approximated by its origin; use height adjustment.
 -- Does not disable disaster damage. No fixed or guessed ocean height.
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -11,7 +12,9 @@ if old then old:Destroy() end
 
 local connections = {}
 local stopped, enabled = false, false
-local candidates = {}
+local clearance = 3
+local waterObject
+local heightInfo = ""
 local lastY, lastSource
 local function connect(signal, callback)
     local c = signal:Connect(callback)
@@ -32,7 +35,7 @@ local gui=make("ScreenGui",playerGui,{
     ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
 })
 local panel=make("Frame",gui,{
-    Size=UDim2.fromOffset(270,136),Position=UDim2.new(0.5,-135,0.28,0),
+    Size=UDim2.fromOffset(270,181),Position=UDim2.new(0.5,-135,0.28,0),
     BackgroundColor3=Color3.fromRGB(20,15,31),BorderSizePixel=0,
 })
 round(panel)
@@ -55,7 +58,7 @@ local toggle=make("TextButton",panel,{
 round(toggle)
 local status=make("TextLabel",panel,{
     Position=UDim2.fromOffset(12,89),Size=UDim2.new(1,-24,0,38),
-    BackgroundTransparency=1,Text="Activa cerca del agua",
+    BackgroundTransparency=1,Text="WaterLevel DIRECT | Activa para probar",
     TextColor3=Color3.fromRGB(206,190,220),TextSize=12,TextWrapped=true,
     Font=Enum.Font.Gotham,
 })
@@ -64,10 +67,6 @@ local pad=make("Part",workspace,{
     Anchored=true,Transparency=1,CanCollide=false,CanTouch=false,
     CanQuery=false,CastShadow=false,
 })
-local terrainParams=RaycastParams.new()
-terrainParams.FilterType=Enum.RaycastFilterType.Include
-terrainParams.FilterDescendantsInstances={workspace.Terrain}
-terrainParams.IgnoreWater=false
 local groundParams=RaycastParams.new()
 groundParams.FilterType=Enum.RaycastFilterType.Exclude
 groundParams.IgnoreWater=true
@@ -82,7 +81,7 @@ connect(gui.Destroying,function()
     stopped=true
     for _,c in ipairs(connections) do c:Disconnect() end
     pad:Destroy()
-    table.clear(candidates)
+
 end)
 connect(close.Activated,function() gui:Destroy() end)
 connect(toggle.Activated,function()
@@ -111,64 +110,67 @@ connect(UIS.InputEnded,function(input)
     if input==dragInput then dragInput=nil end
 end)
 
-local function isWaterPart(part)
-    if not part:IsA("BasePart") or part==pad then return false end
-    if part.Size.X<12 or part.Size.Z<12 then return false end
-    local named=false
-    local node=part
-    while node and node~=workspace do
-        if node:IsA("Model") and node:FindFirstChildOfClass("Humanoid") then return false end
-        local name=string.lower(node.Name)
-        if name:find("water",1,true) or name:find("ocean",1,true)
-            or name=="sea" or name=="flood" or name=="floodwater" then named=true end
-        node=node.Parent
-    end
-    return named or part.Material==Enum.Material.Water
+local minus=make("TextButton",panel,{
+    Position=UDim2.fromOffset(12,135),Size=UDim2.fromOffset(38,32),
+    Text="−",TextSize=20,TextColor3=Color3.new(1,1,1),
+    BackgroundColor3=Color3.fromRGB(71,36,88),BorderSizePixel=0,
+})
+round(minus)
+local plus=make("TextButton",panel,{
+    Position=UDim2.fromOffset(220,135),Size=UDim2.fromOffset(38,32),
+    Text="+",TextSize=20,TextColor3=Color3.new(1,1,1),
+    BackgroundColor3=Color3.fromRGB(71,36,88),BorderSizePixel=0,
+})
+round(plus)
+local heightLabel=make("TextLabel",panel,{
+    Position=UDim2.fromOffset(52,135),Size=UDim2.fromOffset(166,32),
+    Text="Separación: 3 studs",TextSize=13,TextColor3=Color3.new(1,1,1),
+    BackgroundTransparency=1,Font=Enum.Font.Gotham,
+})
+local function adjust(delta)
+    clearance=math.clamp(clearance+delta,-20,50)
+    heightLabel.Text="Separación: "..clearance.." studs"
 end
-local function consider(part)
-    if isWaterPart(part) then candidates[part]=true end
-end
-connect(workspace.DescendantAdded,function(part)
-    task.defer(function()
-        if not stopped and part:IsDescendantOf(workspace) then consider(part) end
-    end)
-end)
-connect(workspace.DescendantRemoving,function(part) candidates[part]=nil end)
--- Periodic chunked discovery also catches parts renamed after parenting.
-task.spawn(function()
-    while not stopped do
-        if enabled then
-            local all=workspace:GetDescendants()
-            for i,part in ipairs(all) do
-                if stopped then return end
-                consider(part)
-                if i%350==0 then task.wait() end
-            end
-        end
-        task.wait(3)
-    end
-end)
+connect(minus.Activated,function() adjust(-1) end)
+connect(plus.Activated,function() adjust(1) end)
 
 local function surfaceAt(position)
-    local best,source
-    for part in pairs(candidates) do
-        if not part:IsDescendantOf(workspace) then
-            candidates[part]=nil
-        elseif part.Transparency<1 and isWaterPart(part) and part.CFrame.UpVector.Y>0.98 then
-            local normal=part.CFrame.UpVector
-            local top=part.Position+normal*(part.Size.Y*0.5)
-            local y=top.Y-(normal.X*(position.X-top.X)+normal.Z*(position.Z-top.Z))/normal.Y
-            local localPoint=part.CFrame:PointToObjectSpace(Vector3.new(position.X,y,position.Z))
-            if math.abs(localPoint.X)<=part.Size.X*0.5 and math.abs(localPoint.Z)<=part.Size.Z*0.5 then
-                if not best or y>best then best,source=y,part end
-            end
+    if not waterObject or waterObject.Parent~=workspace then
+        waterObject=workspace:FindFirstChild("WaterLevel")
+    end
+    if not waterObject then heightInfo="Falta Workspace.WaterLevel";return end
+    if waterObject:IsA("NumberValue") or waterObject:IsA("IntValue") then
+        heightInfo="WaterLevel.Value"
+        return waterObject.Value,waterObject
+    end
+    if not waterObject:IsA("BasePart") then
+        heightInfo="WaterLevel es "..waterObject.ClassName
+        return
+    end
+    local water=waterObject
+    local mesh=water:FindFirstChildWhichIsA("DataModelMesh")
+    local cf=water.CFrame
+    local localY=water.Size.Y*0.5
+    local origin=cf.Position
+    if mesh then
+        origin=cf:PointToWorldSpace(mesh.Offset)
+        if mesh:IsA("BlockMesh") or
+            (mesh:IsA("SpecialMesh") and mesh.MeshType==Enum.MeshType.Brick) then
+            localY=water.Size.Y*math.abs(mesh.Scale.Y)*0.5
+        else
+            -- File/flat meshes do not expose rendered bounds through Part.Size.
+            -- Follow their origin and offset instead; height control calibrates it.
+            localY=0
         end
     end
-    local hit=workspace:Raycast(position+Vector3.new(0,512,0),Vector3.new(0,-2048,0),terrainParams)
-    if hit and hit.Material==Enum.Material.Water and (not best or hit.Position.Y>best) then
-        best,source=hit.Position.Y,workspace.Terrain
+    local normal=cf.UpVector
+    if math.abs(normal.Y)<0.95 then
+        heightInfo="WaterLevel inclinado: revisar propiedades";return
     end
-    return best,source
+    local top=origin+normal*localY
+    local y=top.Y-(normal.X*(position.X-top.X)+normal.Z*(position.Z-top.Z))/normal.Y
+    heightInfo=string.format("WaterLevel DIRECT | Y %.1f",y)
+    return y,water
 end
 
 local uiClock=0
@@ -182,10 +184,10 @@ connect(RunService.PreSimulation,function(dt)
     end
     local y,source=surfaceAt(root.Position)
     if not y then
-        disablePad();status.Text="No se detecta agua debajo";return
+        disablePad();status.Text=heightInfo;return
     end
     -- Keep feet above the detected surface, away from touch-based water damage.
-    local targetY=y+1
+    local targetY=y+clearance
     local leg=char:FindFirstChild("Left Leg")
     local feet=root.Position.Y-(hum.HipHeight+root.Size.Y*0.5+(leg and leg.Size.Y or 0))
     local grounded=pad.CanCollide and lastY and math.abs(feet-lastY)<0.8
@@ -210,7 +212,7 @@ connect(RunService.PreSimulation,function(dt)
     uiClock=uiClock+dt
     if uiClock>=0.2 then
         uiClock=0
-        status.Text=pad.CanCollide and string.format("%s | nivel %.1f",source.Name,y)
-            or "Detectado: sube por encima del agua"
+        status.Text=pad.CanCollide and heightInfo
+            or (heightInfo.." | Sube encima de la plataforma")
     end
 end)
