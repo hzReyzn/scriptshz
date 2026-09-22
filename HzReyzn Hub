@@ -157,9 +157,13 @@ local emblem=make("Frame",loadCard,{
 round(emblem,19)
 local emblemEdge=make("UIStroke",emblem,{Thickness=2,Color=Color3.new(1,1,1)})
 make("UIGradient",emblemEdge,{Color=loadColors,Rotation=40})
-local monogram=label(emblem,"HZ",UDim2.fromScale(0,0),UDim2.fromScale(1,1),27,white)
-monogram.TextXAlignment=Enum.TextXAlignment.Center;monogram.Font=Enum.Font.GothamBold
-make("UIGradient",monogram,{Color=loadColors,Rotation=20})
+local loadingLogo=make("ImageLabel",emblem,{
+    Name="LoadingLogo",Position=UDim2.fromOffset(2,2),Size=UDim2.new(1,-4,1,-4),
+    BackgroundTransparency=1,BorderSizePixel=0,
+    Image="rbxassetid://132960411848659",ImageColor3=Color3.new(1,1,1),
+    ScaleType=Enum.ScaleType.Crop,Active=false,
+})
+round(loadingLogo,17)
 local loadTitle=label(loadCard,"HzReyzn Hub",UDim2.fromOffset(20,112),UDim2.fromOffset(420,38),29,white)
 loadTitle.TextXAlignment=Enum.TextXAlignment.Center;loadTitle.Font=Enum.Font.GothamBold
 local loadText=label(loadCard,"Loading",UDim2.fromOffset(30,169),UDim2.fromOffset(330,24),13,Color3.fromRGB(186,182,212))
@@ -1188,6 +1192,16 @@ launcher.ZIndex = 5
 launcher.BackgroundTransparency = 0.08
 
 gradientBorder(launcher, 2.2, 0.06)
+launcher.Text=""
+do
+    local image=make("ImageLabel",launcher,{
+        Name="LauncherLogo",Position=UDim2.fromOffset(2,2),Size=UDim2.new(1,-4,1,-4),
+        BackgroundTransparency=1,BorderSizePixel=0,ZIndex=6,
+        Image="rbxassetid://132960411848659",ImageColor3=Color3.new(1,1,1),
+        ScaleType=Enum.ScaleType.Crop,Active=false,
+    })
+    round(image,10)
+end
 
 local COLOR_CYCLE_SECONDS = 10
 local TAU = math.pi * 2
