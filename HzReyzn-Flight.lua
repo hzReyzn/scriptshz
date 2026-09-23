@@ -35,13 +35,6 @@ task.spawn(function()
         if ok then flightControls=controls end
     end
 end)
-local protectedRoot, protectedVelocity
-local function restoreFallVelocity()
-    if protectedRoot and protectedRoot.Parent then
-        protectedRoot.AssemblyLinearVelocity=protectedVelocity
-    end
-    protectedRoot,protectedVelocity=nil,nil
-end
 local character, humanoid, root, animator, oldAuto, oldStand
 local bindingModel
 local flightAttachment, velocityMover, orientationMover
@@ -67,7 +60,82 @@ local function tween(o,props,time)
     local t=TweenService:Create(o,TweenInfo.new(time or 0.18,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),props)
     t:Play();return t
 end
+-- Shared NoFallDamage: one sampler for Hub + Fly, regardless of activation order.
+local function acquireNoFall(owner)
+    local service=playerGui:FindFirstChild("HzReyzn_NoFallDamage_v2")
+    if not service then
+        service=Instance.new("Folder")
+        service.Name="HzReyzn_NoFallDamage_v2"
+        local pending,closed=nil,false
+        local links={}
+        local function eligible(model,h,r)
+            return model==player.Character and model.Parent and h.Parent==model and r.Parent==model
+                and h.Health>0 and not r.Anchored and not h.SeatPart and not h.Sit
+                and not h.PlatformStand and not h.Jump and h.FloorMaterial==Enum.Material.Air
+                and h:GetState()==Enum.HumanoidStateType.Freefall
+                and not r:FindFirstChild("HZFlightVelocity")
+        end
+        local function restore()
+            local sample=pending;pending=nil
+            if not sample or not eligible(sample.model,sample.hum,sample.root) then return end
+            local current=sample.root.AssemblyLinearVelocity
+            -- A jump, impulse or another controller owns any newly changed Y velocity.
+            -- Never replay an old horizontal velocity over player input or earthquake control.
+            if math.abs(current.Y)>0.001 then return end
+            sample.root.AssemblyLinearVelocity=Vector3.new(current.X,sample.y,current.Z)
+        end
+        local function stop()
+            if closed then return end
+            closed=true;restore()
+            for _,c in ipairs(links) do c:Disconnect() end
+            table.clear(links)
+        end
+        local function listen(signal,callback)
+            links[#links+1]=signal:Connect(callback)
+        end
+        listen(service.Destroying,stop)
+        -- Restore before animations/physics even when rendering is throttled.
+        listen(RunService.PreAnimation,restore)
+        listen(RunService.PreSimulation,restore)
+        listen(RunService.RenderStepped,restore)
+        listen(player.CharacterRemoving,function(model)
+            if pending and pending.model==model then pending=nil end
+        end)
+        listen(RunService.Heartbeat,function()
+            if closed then return end
+            restore()
+            local model=player.Character
+            local h=model and model:FindFirstChildOfClass("Humanoid")
+            local r=model and model:FindFirstChild("HumanoidRootPart")
+            if not h or not r or not eligible(model,h,r) then return end
+            local velocity=r.AssemblyLinearVelocity
+            if velocity.Y>=-1 then return end
+            pending={model=model,hum=h,root=r,y=velocity.Y}
+            r.AssemblyLinearVelocity=Vector3.new(velocity.X,0,velocity.Z)
+        end)
+        service.Parent=playerGui
+    end
+    local lease=Instance.new("ObjectValue")
+    lease.Name=owner.Name;lease.Value=owner;lease.Parent=service
+    local released,ownerConnection=false,nil
+    local function release()
+        if released then return end
+        released=true
+        if ownerConnection then ownerConnection:Disconnect() end
+        lease:Destroy()
+        if not service.Parent then return end
+        for _,child in ipairs(service:GetChildren()) do
+            if child:IsA("ObjectValue") and child.Value and child.Value.Parent then return end
+        end
+        service:Destroy()
+    end
+    ownerConnection=owner.Destroying:Connect(release)
+    return release
+end
+-- End shared NoFallDamage.
+
 local gui=make("ScreenGui",playerGui,{Name="HZFlightStandalone",ResetOnSpawn=false,DisplayOrder=65,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
+local releaseNoFall=acquireNoFall(gui)
 local panel=make("CanvasGroup",gui,{Visible=false,GroupTransparency=1,Position=UDim2.new(0.5,-125,0.32,0),Size=UDim2.fromOffset(250,179),BackgroundColor3=Color3.fromRGB(8,14,35),BorderSizePixel=0,ClipsDescendants=true})
 corner(panel,14)
 make("UIGradient",panel,{Color=ColorSequence.new(Color3.fromRGB(175,204,255),Color3.fromRGB(76,94,153)),Rotation=55})
@@ -365,7 +433,6 @@ local function endFlight(withFall)
     if takeoffPulse then takeoffPulse.Transparency=1 end
 end
 local function resetCharacter()
-    restoreFallVelocity()
     endFlight(false);stopTracks();releaseMovers();fallAt=nil
     for _,c in ipairs(characterConnections) do c:Disconnect() end
     table.clear(characterConnections)
@@ -419,7 +486,6 @@ end
 local function startFlight()
     if dead or not loadingFinished or flying or not humanoid or not root or not root.Parent or humanoid.Health<=0 then return end
     if humanoid.SeatPart or root.Anchored then status.Text="Stand up to fly";return end
-    restoreFallVelocity()
     fallAt=nil;takeoffAt=os.clock();oldAuto=humanoid.AutoRotate;oldStand=humanoid.PlatformStand
     local ok,err=pcall(function()
         flightAttachment=make("Attachment",root,{Name="HZFlightControl"})
@@ -447,7 +513,6 @@ connect(player.CharacterRemoving,function(model)
 end)
 local uiClock=0
 connect(RunService.PreSimulation,function(dt)
-    restoreFallVelocity()
     if dead or not root or not root.Parent or not humanoid then return end
     clock=clock+dt
     local now=os.clock()
@@ -501,22 +566,9 @@ connect(RunService.PreSimulation,function(dt)
     uiClock=uiClock+dt
     if uiClock>0.15 and animationsReady then uiClock=0;status.Text=state..(flying and (" · "..speed) or " · Aura Blur") end
 end)
--- Same Heartbeat/render protection tested in the NDS Hub; always enabled
--- while this script is present, including after switching flight OFF.
-connect(RunService.Heartbeat,function()
-    restoreFallVelocity()
-    if dead then return end
-    local model=player.Character
-    local h=model and model:FindFirstChildOfClass("Humanoid")
-    local r=model and model:FindFirstChild("HumanoidRootPart")
-    if not h or not r or h.Health<=0 or r.Anchored or h.SeatPart then return end
-    protectedRoot,protectedVelocity=r,r.AssemblyLinearVelocity
-    r.AssemblyLinearVelocity=Vector3.zero
-end)
-connect(RunService.RenderStepped,restoreFallVelocity)
 connect(gui.Destroying,function()
     if dead then return end
-    dead=true;generation=generation+1;resetCharacter()
+    dead=true;releaseNoFall();generation=generation+1;resetCharacter()
     for _,c in ipairs(connections) do c:Disconnect() end
 end)
 connect(close.Activated,function() gui:Destroy() end)
