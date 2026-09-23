@@ -1,5 +1,5 @@
 -- HzReyzn Hub
--- Four selectable themes and animated executable cards.
+-- Crimson interface, cinematic loading and selectable themes.
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -44,19 +44,19 @@ local function round(object, radius)
     })
 end
 
-local white = Color3.fromRGB(244, 237, 251)
-local muted = Color3.fromRGB(159, 146, 175)
-local pink = Color3.fromRGB(239, 112, 182)
-local dark = Color3.fromRGB(12, 9, 18)
+local white = Color3.fromRGB(240, 241, 245)
+local muted = Color3.fromRGB(148, 151, 164)
+local pink = Color3.fromRGB(242, 28, 52)
+local dark = Color3.fromRGB(10, 11, 15)
 local accentColor = pink
-local selectedBackground = Color3.fromRGB(68, 36, 78)
-local theme = "Original"
+local selectedBackground = Color3.fromRGB(57, 19, 27)
+local theme = "Crimson"
 local themeButtons = {}
 local executableCards = {}
 local paintColors
 local colorClock = 0
-local panelColor = Color3.fromRGB(31, 23, 40)
-local idleTabColor = Color3.fromRGB(27, 20, 35)
+local panelColor = Color3.fromRGB(21, 22, 29)
+local idleTabColor = Color3.fromRGB(16, 17, 23)
 
 local function label(parent, text, position, size, fontSize, color)
     return make("TextLabel", parent, {
@@ -77,14 +77,14 @@ local function button(parent, text, position, size)
         Size = size,
         Text = text,
         TextColor3 = white,
-        BackgroundColor3 = Color3.fromRGB(31, 23, 40),
-        BackgroundTransparency = 0.12,
+        BackgroundColor3 = panelColor,
+        BackgroundTransparency = 0,
         BorderSizePixel = 0,
         Font = Enum.Font.GothamMedium,
         TextSize = 15,
         AutoButtonColor = true,
     })
-    round(object, 12)
+    round(object, 8)
     return object
 end
 
@@ -122,7 +122,7 @@ local intro=(function()
     local duration=16.5
     local ready,leaving,skipRequested=false,false,false
     local reveal
-    local red=Color3.fromRGB(230,13,41)
+    local red=Color3.fromRGB(242,28,52)
     local silver=Color3.fromRGB(228,235,240)
     local black=Color3.fromRGB(3,4,5)
     local layer=make("Frame",gui,{Name="Loading",Size=UDim2.fromScale(1,1),
@@ -157,7 +157,7 @@ local intro=(function()
     end
     local grid=group(stage)
     for n=-14,14 do
-        local fade=.955+math.abs(n)/14*.035
+        local fade=.93+math.abs(n)/14*.06
         line(grid,400+n*22,30,400+n*22,600,1,silver,fade)
         line(grid,75,310+n*20,725,310+n*20,1,silver,fade)
     end
@@ -204,21 +204,56 @@ local intro=(function()
         accent(line(stage,430,y,480,y+sign*35,2,silver,.6))
     end
     local pointers=group(stage)
-    for _,v in ipairs({{400,108,0},{605,310,90},{400,513,180},{195,310,270}}) do
-        local arrow=text(pointers,"▽",v[1]-10,v[2]-12,20,24,22,silver)
-        arrow.Rotation=v[3]
+    for n=0,3 do
+        local a=n*math.pi*.5
+        local x,y=400+math.cos(a)*199,310+math.sin(a)*199
+        local tx,ty=-math.sin(a)*6,math.cos(a)*6
+        line(pointers,x+tx,y+ty,x-tx,y-ty,1.5,silver,0)
+        line(pointers,x+tx,y+ty,x-math.cos(a)*9,y-math.sin(a)*9,1.5,silver,0)
+        line(pointers,x-tx,y-ty,x-math.cos(a)*9,y-math.sin(a)*9,1.5,silver,0)
+    end
+    local halo=make("Frame",stage,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(400,310),
+        Size=UDim2.fromOffset(417,417),BackgroundTransparency=1})
+    round(halo,210)
+    local haloEdge=make("UIStroke",halo,{Thickness=13,Color=red,Transparency=.82})
+    make("UIGradient",haloEdge,{Transparency=NumberSequence.new({
+        NumberSequenceKeypoint.new(0,.1),NumberSequenceKeypoint.new(.4,.8),
+        NumberSequenceKeypoint.new(.7,.2),NumberSequenceKeypoint.new(1,.9)}),Rotation=25})
+    local rotor=ring(217,{{-30,24},{145,205}},2,.08)
+    for _,child in ipairs(rotor:GetChildren()) do
+        if child:IsA("Frame") then child.BackgroundColor3=red end
+    end
+    local leds={}
+    for n=0,71 do
+        local a=math.rad(n*5)
+        local led=line(stage,400+math.cos(a)*207,310+math.sin(a)*207,
+            400+math.cos(a)*213,310+math.sin(a)*213,2.5,red,.7)
+        leds[#leds+1]=led
+    end
+    -- Luminous curved side brackets, as in the reference.
+    for _,sign in ipairs({-1,1}) do
+        for n=0,15 do
+            local a=math.rad(-21+n*42/16)
+            local b=math.rad(-21+(n+1)*42/16)
+            local x1,x2=400+sign*math.cos(a)*273,400+sign*math.cos(b)*273
+            local y1,y2=310+math.sin(a)*273,310+math.sin(b)*273
+            line(stage,x1,y1,x2,y2,9,red,.95)
+            line(stage,x1,y1,x2,y2,4,red,.8)
+            line(stage,x1,y1,x2,y2,1.4,red,.1)
+        end
+        for _,y in ipairs({213,407}) do line(stage,400+sign*255,y,400+sign*228,y,2,red,.3) end
+    end
+    local lightSweep=frame(stage,105,100,590,2,red,.9)
+    make("UIGradient",lightSweep,{Transparency=NumberSequence.new({
+        NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(.5,0),NumberSequenceKeypoint.new(1,1)})})
+    local statusDot=frame(stage,335,586,4,4,red,.1);round(statusDot,2)
+    for _,v in ipairs({{338,47},{442,47},{338,566},{442,566}}) do
+        for j=0,6 do line(stage,v[1]+j*3,v[2],v[1]+j*3,v[2]+9,1,silver,.6) end
     end
     local core=group(stage);core.GroupTransparency=1
-    local coreScale=make("UIScale",core,{Scale=1})
     local logo=make("ImageLabel",core,{Name="PrimaryLogo",AnchorPoint=Vector2.new(.5,.5),
         Position=UDim2.fromOffset(400,310),Size=UDim2.fromOffset(248,248),BackgroundTransparency=1,
         Image="rbxassetid://115928147610604",ScaleType=Enum.ScaleType.Fit})
-    local smallLogo=make("ImageLabel",stage,{Name="RightLogo",AnchorPoint=Vector2.new(.5,.5),
-        Position=UDim2.fromOffset(681,310),Size=UDim2.fromOffset(44,44),BackgroundTransparency=1,
-        Image="rbxassetid://99559023639968",ScaleType=Enum.ScaleType.Fit,ImageTransparency=1})
-    local fallback=text(core,"Hz",325,263,150,94,70,silver)
-    fallback.Visible=not logo.IsLoaded
-    connect(logo:GetPropertyChangedSignal("IsLoaded"),function() fallback.Visible=not logo.IsLoaded end)
     local charge=group(stage)
     local chargePlate=frame(charge,182,265,436,90,black,.02)
     -- Hexagonal end caps and double outline around the loading segments.
@@ -244,10 +279,10 @@ local intro=(function()
         local stripe2=frame(banner,313+n*19,350,9,16,red,.3);stripe2.Rotation=28
     end
     local title=text(banner,"HzReyzn Hub",211,281,378,56,38,red)
-    local subtitle=text(stage,"LOADING",310,572,180,27,17,red)
+    local subtitle=text(stage,"LOADING",345,575,120,24,15,red)
     local subline=frame(stage,348,603,104,2,red,.1)
     local skip=make("TextButton",layer,{Name="SkipIntro",Position=UDim2.fromOffset(24,52),
-        Size=UDim2.fromOffset(120,36),Text="SALTAR  »",Font=Enum.Font.GothamBold,TextSize=12,
+        Size=UDim2.fromOffset(120,36),Text="skip load",Font=Enum.Font.GothamBold,TextSize=12,
         TextColor3=silver,BackgroundColor3=Color3.fromRGB(18,19,22),BackgroundTransparency=.12,
         BorderSizePixel=0,AutoButtonColor=true,ZIndex=2})
     round(skip,7);make("UIStroke",skip,{Color=red,Thickness=1,Transparency=.25})
@@ -295,7 +330,7 @@ local intro=(function()
         if not ok then warn("[HzReyzn Intro] Local audio unavailable: "..tostring(err)) end
     end)
     task.spawn(function()
-        pcall(function() game:GetService("ContentProvider"):PreloadAsync({logo,smallLogo}) end)
+        pcall(function() game:GetService("ContentProvider"):PreloadAsync({logo}) end)
     end)
     local lastPhase,lastSegment=nil,-1
     renderConnection=connect(RunService.RenderStepped,function()
@@ -320,11 +355,23 @@ local intro=(function()
             for j,segment in ipairs(segments) do segment.BackgroundTransparency=j<=lit and .08 or .93 end
         end
         outer.Rotation=t*13;middle.Rotation=-t*21;ticks.Rotation=t*6
-        smallLogo.ImageTransparency=1-math.clamp((t-6)/1.2,0,1)
         local tint=silver:Lerp(red,redBlend)
         -- Recolor once during transition; animation moves containers, not individual lines.
-        if t>=7.8 and t<=10 then for _,object in ipairs(accents) do object.BackgroundColor3=tint end end
-        coreScale.Scale=1 -- The logo stays upright; only the surrounding rings rotate.
+        if t>=7.8 and t<=10 then
+            for _,object in ipairs(accents) do object.BackgroundColor3=tint end
+        end
+        logo.Size=UDim2.fromOffset(248+4*math.sin(t*1.7),248+4*math.sin(t*1.7))
+        logo.Rotation=phase==2 and math.sin(t*1.5)*1.5 or 0
+        halo.Rotation=-t*7
+        rotor.Rotation=t*34
+        lightSweep.Position=UDim2.fromOffset(105,100+(t*.2%1)*400)
+        lightSweep.BackgroundTransparency=.89+.04*math.sin(t*2)
+        for j,led in ipairs(leds) do
+            local wave=(j/#leds-t*.18)%1
+            led.BackgroundTransparency=wave<.22 and .06+wave*2.1 or .83
+        end
+        haloEdge.Transparency=.8+.06*math.sin(t*2.2)
+        statusDot.BackgroundTransparency=.2+.25*(1+math.sin(t*3))*.5
         subtitle.TextTransparency=.12+.16*(1+math.sin(t*3))*.5
         if t>=duration then finish() end
     end)
@@ -338,13 +385,13 @@ end)()
 local window = make("CanvasGroup", surface, {
     Name = "Window",
     Visible = false,
-    Size = UDim2.fromOffset(700, 410),
+    Size = UDim2.fromOffset(760, 450),
     BackgroundColor3 = dark,
-    BackgroundTransparency = 0.08,
+    BackgroundTransparency = 0.015,
     BorderSizePixel = 0,
     ClipsDescendants = true,
 })
-round(window, 20)
+round(window, 16)
 
 local scale = make("UIScale", window, {Scale = 1})
 local gradients = {}
@@ -363,17 +410,14 @@ end
 
 gradientBorder(window, 2.2, 0.06)
 
-for i = 1, 5 do
-    local inset = 2 + i * 2
-
-    local glow = make("Frame", window, {
-        BackgroundTransparency = 1,
-        ZIndex = 0,
-        Position = UDim2.fromOffset(inset, inset),
-        Size = UDim2.new(1, -inset * 2, 1, -inset * 2),
-    })
-    round(glow, math.max(4, 20 - inset))
-    gradientBorder(glow, 4, 0.56 + i * 0.07)
+local design={}
+do
+    local inset=make("Frame",window,{Position=UDim2.fromOffset(6,6),Size=UDim2.new(1,-12,1,-12),
+        BackgroundTransparency=1,BorderSizePixel=0,ZIndex=0})
+    round(inset,12);gradientBorder(inset,1,.82)
+    design.footer=label(window,"Made By hzReyzn",UDim2.fromOffset(204,427),UDim2.fromOffset(300,14),9,muted)
+    design.footer.TextXAlignment=Enum.TextXAlignment.Right
+    design.footer.Size=UDim2.fromOffset(530,14)
 end
 
 local accent = make("Frame", window, {
@@ -389,24 +433,23 @@ local header = make("Frame", window, {
     BackgroundTransparency = 1,
 })
 
-local logo = label(
-    header, "HZ", UDim2.fromOffset(20, 14),
-    UDim2.fromOffset(42, 36), 19, pink
-)
-logo.Font = Enum.Font.GothamBold
-
-label(
-    header, "HzReyzn Hub", UDim2.fromOffset(72, 22),
-    UDim2.fromOffset(360, 23), 19
-)
+local logo=make("ImageLabel",header,{
+    Name="HeaderLogo",Position=UDim2.fromOffset(20,9),Size=UDim2.fromOffset(46,46),
+    BackgroundTransparency=1,Image="rbxassetid://115928147610604",ScaleType=Enum.ScaleType.Fit,
+})
+local hubTitle=label(header,"HzReyzn Hub",UDim2.fromOffset(78,12),UDim2.fromOffset(360,25),20,white)
+hubTitle.Font=Enum.Font.GothamBold
+local hubCaption=label(header,"PERSONAL WORKSPACE",UDim2.fromOffset(79,39),UDim2.fromOffset(240,13),9,muted)
+design.caption=hubCaption
+design.divider=make("Frame",header,{Position=UDim2.fromOffset(20,63),Size=UDim2.new(1,-40,0,1),BackgroundColor3=muted,BackgroundTransparency=.8,BorderSizePixel=0})
 
 local minimize = button(
-    header, "HZ", UDim2.new(1, -112, 0, 10),
-    UDim2.fromOffset(44, 44)
+    header, "−", UDim2.new(1, -104, 0, 14),
+    UDim2.fromOffset(36, 36)
 )
 local close = button(
-    header, "×", UDim2.new(1, -60, 0, 10),
-    UDim2.fromOffset(44, 44)
+    header, "×", UDim2.new(1, -56, 0, 14),
+    UDim2.fromOffset(36, 36)
 )
 close.TextSize = 24
 
@@ -418,28 +461,28 @@ local dragArea = make("Frame", header, {
 
 local body = make("Frame", window, {
     Position = UDim2.fromOffset(0, 64),
-    Size = UDim2.fromOffset(700, 346),
+    Size = UDim2.fromOffset(760, 386),
     BackgroundTransparency = 1,
 })
 
 local sidebar = make("Frame", body, {
-    Position = UDim2.fromOffset(14, 10),
-    Size = UDim2.fromOffset(146, 318),
-    BackgroundColor3 = Color3.fromRGB(22, 16, 30),
-    BackgroundTransparency = 0.15,
+    Position = UDim2.fromOffset(16, 10),
+    Size = UDim2.fromOffset(164, 354),
+    BackgroundColor3 = idleTabColor,
+    BackgroundTransparency = 0,
     BorderSizePixel = 0,
 })
 round(sidebar, 15)
 
 label(
-    sidebar, "WORKSPACE", UDim2.fromOffset(16, 16),
+    sidebar, "NAVIGATION", UDim2.fromOffset(16, 16),
     UDim2.fromOffset(120, 20), 10, muted
 )
 local refreshProfile = function() end
 do
     local card=make("Frame",sidebar,{
-        Name="LocalPlayerProfile",Position=UDim2.fromOffset(8,272),
-        Size=UDim2.fromOffset(130,38),BackgroundColor3=panelColor,
+        Name="LocalPlayerProfile",Position=UDim2.fromOffset(8,301),
+        Size=UDim2.fromOffset(148,44),BackgroundColor3=panelColor,
         BackgroundTransparency=0.15,BorderSizePixel=0,
     })
     round(card,10)
@@ -452,10 +495,10 @@ do
     local fallback=label(avatar,"HZ",UDim2.fromScale(0,0),UDim2.fromScale(1,1),11,accentColor)
     fallback.TextXAlignment=Enum.TextXAlignment.Center
     local edge=make("UIStroke",avatar,{Thickness=1,Color=accentColor,Transparency=0.2})
-    local name=label(card,player.DisplayName,UDim2.fromOffset(40,3),UDim2.fromOffset(86,17),11,white)
+    local name=label(card,player.DisplayName,UDim2.fromOffset(40,3),UDim2.fromOffset(100,17),11,white)
     name.Font=Enum.Font.GothamBold
     name.TextTruncate=Enum.TextTruncate.AtEnd
-    local id=label(card,"ID: "..tostring(player.UserId),UDim2.fromOffset(40,21),UDim2.fromOffset(86,12),8,muted)
+    local id=label(card,"ID: "..tostring(player.UserId),UDim2.fromOffset(40,21),UDim2.fromOffset(100,12),8,muted)
     id.TextScaled=true
     make("UITextSizeConstraint",id,{MinTextSize=6,MaxTextSize=8})
     refreshProfile=function()
@@ -490,31 +533,31 @@ do
 end
 
 local content = make("Frame", body, {
-    Position = UDim2.fromOffset(180, 10),
-    Size = UDim2.fromOffset(498, 318),
+    Position = UDim2.fromOffset(200, 10),
+    Size = UDim2.fromOffset(538, 354),
     BackgroundTransparency = 1,
 })
 
 local eyebrow = label(
     content, "MAIN", UDim2.fromOffset(0, 4),
-    UDim2.fromOffset(490, 20), 11, pink
+    UDim2.fromOffset(530, 20), 11, pink
 )
 local title = label(
     content, "More Features soon", UDim2.fromOffset(0, 32),
-    UDim2.fromOffset(490, 34), 25
+    UDim2.fromOffset(530, 34), 25
 )
 title.Font = Enum.Font.GothamBold
 
 local description = label(
     content, "", UDim2.fromOffset(0, 72),
-    UDim2.fromOffset(490, 25), 12, muted
+    UDim2.fromOffset(530, 25), 12, muted
 )
 
 local function scrollingPage(name)
     local scroll = make("ScrollingFrame", content, {
         Name = name,
         Position = UDim2.fromOffset(0, 105),
-        Size = UDim2.fromOffset(498, 207),
+        Size = UDim2.fromOffset(538, 241),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         CanvasSize = UDim2.fromOffset(0, 0),
@@ -544,69 +587,109 @@ end
 local mainScroll = scrollingPage("ShadersScroll")
 local ndsScroll = scrollingPage("NDSScroll")
 ndsScroll.Position = UDim2.fromOffset(0, 78)
-ndsScroll.Size = UDim2.fromOffset(498, 234)
+ndsScroll.Size = UDim2.fromOffset(538, 264)
 local othersScroll = scrollingPage("OthersScriptsScroll")
 local serverScroll = scrollingPage("ServerScroll")
 serverScroll.Position=UDim2.fromOffset(0,78)
-serverScroll.Size=UDim2.fromOffset(498,234)
+serverScroll.Size=UDim2.fromOffset(538,264)
 
 local settingsPage = make("Frame", content, {
-    Position = UDim2.fromOffset(0, 110),
-    Size = UDim2.fromOffset(498, 200),
+    Position = UDim2.fromOffset(0, 94),
+    Size = UDim2.fromOffset(538, 250),
     BackgroundTransparency = 1,
     Visible = false,
 })
 
 local animatedColors = true
-local colorButton = button(
-    settingsPage, "Animated colors: ON",
-    UDim2.fromOffset(0, 148), UDim2.new(1, -12, 0, 46)
-)
-connect(colorButton.Activated, function()
-    animatedColors = not animatedColors
-    colorButton.Text = animatedColors
-        and "Animated colors: ON" or "Animated colors: PAUSED"
-end)
-
-local themeOptions = {
-    {"Original", Color3.fromRGB(239, 112, 182)},
-    {"Black / Grey / White", Color3.fromRGB(255, 255, 255)},
-    {"RGB", Color3.fromRGB(70, 235, 230)},
-    {"Ocean Theme", Color3.fromRGB(60, 220, 235)},
-}
-for index, option in ipairs(themeOptions) do
-    local themeName = option[1]
-    local choice = button(settingsPage, themeName,
-        UDim2.fromOffset(((index - 1) % 2) * 249, 4 + math.floor((index - 1) / 2) * 68),
-        UDim2.fromOffset(237, 58))
-    choice.TextSize = 13
-    choice.Font = Enum.Font.GothamBold
-    local edge = make("UIStroke", choice, {
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        Thickness = 1.5, Color = option[2], Transparency = 0.6,
-    })
-    local swatch = make("Frame", choice, {
-        Position = UDim2.fromOffset(14, 11),
-        Size = UDim2.new(1, -28, 0, 4),
-        BackgroundColor3 = option[2], BorderSizePixel = 0,
-    })
-    round(swatch, 2)
-    if themeName == "RGB" then
-        local rainbow = make("UIGradient", swatch, {
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 100)),
-                ColorSequenceKeypoint.new(0.33, Color3.fromRGB(100, 255, 90)),
-                ColorSequenceKeypoint.new(0.66, Color3.fromRGB(70, 160, 255)),
-                ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 80, 255)),
-            }),
-        })
-        swatch.BackgroundColor3 = Color3.new(1, 1, 1)
+local refreshSettings=function() end
+local closeThemes=function() end
+local colorButton
+local themeDisplay={Crimson="Crimson",Original="Original",["Black / Grey / White"]="Monochrome",RGB="RGB",["Ocean Theme"]="Ocean"}
+do
+    local function settingCard(y,titleText,detail)
+        local card=make("Frame",settingsPage,{Position=UDim2.fromOffset(0,y),Size=UDim2.fromOffset(526,74),
+            BackgroundColor3=panelColor,BorderSizePixel=0})
+        round(card,10);gradientBorder(card,1,.7)
+        local title=label(card,titleText,UDim2.fromOffset(16,13),UDim2.fromOffset(225,24),14,white)
+        title.Font=Enum.Font.GothamBold
+        local hint=label(card,detail,UDim2.fromOffset(16,40),UDim2.fromOffset(248,18),11,muted)
+        return card,hint
     end
-    themeButtons[themeName] = {button = choice, edge = edge}
-    connect(choice.Activated, function()
-        theme = themeName
+    local themeCard,themeHint=settingCard(0,"Theme","Choose your interface colors.")
+    local picker=button(themeCard,"Crimson   +",UDim2.fromOffset(280,17),UDim2.fromOffset(228,40))
+    picker.Name="ThemePicker";picker.TextSize=13
+    local motionCard,motionHint=settingCard(88,"Animated accents","Slow color movement around the Hub.")
+    colorButton=button(motionCard,"ON",UDim2.fromOffset(430,17),UDim2.fromOffset(78,40))
+    colorButton.Name="AnimatedAccents"
+    local preview=make("Frame",settingsPage,{Position=UDim2.fromOffset(0,176),Size=UDim2.fromOffset(526,61),
+        BackgroundColor3=panelColor,BorderSizePixel=0})
+    round(preview,10)
+    make("ImageLabel",preview,{Position=UDim2.fromOffset(12,9),Size=UDim2.fromOffset(43,43),BackgroundTransparency=1,
+        Image="rbxassetid://115928147610604",ScaleType=Enum.ScaleType.Fit})
+    local previewTitle=label(preview,"HzReyzn Hub",UDim2.fromOffset(68,11),UDim2.fromOffset(260,22),14,white)
+    previewTitle.Font=Enum.Font.GothamBold
+    local previewText=label(preview,"Crimson",UDim2.fromOffset(68,34),UDim2.fromOffset(320,15),10,accentColor)
+    local outside=make("TextButton",window,{Name="ThemeDismiss",Size=UDim2.fromScale(1,1),Text="",
+        BackgroundTransparency=1,Visible=false,AutoButtonColor=false,ZIndex=20})
+    local menu=make("CanvasGroup",window,{Name="ThemeMenu",Position=UDim2.fromOffset(472,224),
+        Size=UDim2.fromOffset(264,208),BackgroundColor3=dark,BorderSizePixel=0,Visible=false,
+        GroupTransparency=1,ZIndex=21,ClipsDescendants=true})
+    round(menu,12);local menuEdge=gradientBorder(menu,1.3,.15)
+    label(menu,"SELECT THEME",UDim2.fromOffset(14,8),UDim2.fromOffset(230,20),9,muted)
+    local menuOpen,menuTween=false,nil
+    local function setOpen(on)
+        menuOpen=on
+        if menuTween then menuTween:Cancel() end
+        outside.Visible=on
+        if on then
+            menu.Visible=true;menu.Position=UDim2.fromOffset(472,216);menu.GroupTransparency=1
+            menuTween=TweenService:Create(menu,TweenInfo.new(.18,Enum.EasingStyle.Quart),
+                {Position=UDim2.fromOffset(472,224),GroupTransparency=0})
+        else
+            menuTween=TweenService:Create(menu,TweenInfo.new(.12),{GroupTransparency=1})
+            task.delay(.12,function() if not destroyed and not menuOpen then menu.Visible=false end end)
+        end
+        menuTween:Play()
+        picker.Text=(themeDisplay[theme] or theme)..(on and "   −" or "   +")
+    end
+    closeThemes=function() if menuOpen then setOpen(false) end end
+    connect(picker.Activated,function() setOpen(not menuOpen) end)
+    connect(outside.Activated,closeThemes)
+    local options={
+        {"Crimson",Color3.fromRGB(242,28,52)},
+        {"Black / Grey / White",Color3.fromRGB(216,218,225)},
+        {"Ocean Theme",Color3.fromRGB(55,193,244)},
+        {"Original",Color3.fromRGB(207,120,252)},
+        {"RGB",Color3.fromRGB(91,235,171)},
+    }
+    for index,option in ipairs(options) do
+        local name=option[1]
+        local choice=button(menu,themeDisplay[name],UDim2.fromOffset(8,31+(index-1)*33),UDim2.fromOffset(248,29))
+        choice.Name="Theme_"..name;choice.TextSize=12;choice.TextXAlignment=Enum.TextXAlignment.Left
+        make("UIPadding",choice,{PaddingLeft=UDim.new(0,34)})
+        local swatch=make("Frame",choice,{Position=UDim2.fromOffset(-22,9),Size=UDim2.fromOffset(11,11),
+            BackgroundColor3=option[2],BorderSizePixel=0});round(swatch,4)
+        local edge=make("UIStroke",choice,{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=option[2],Thickness=1,Transparency=.7})
+        themeButtons[name]={button=choice,edge=edge}
+        connect(choice.Activated,function()
+            theme=name
+            if paintColors then paintColors(colorClock) end
+            setOpen(false)
+        end)
+    end
+    connect(colorButton.Activated,function()
+        animatedColors=not animatedColors
         if paintColors then paintColors(colorClock) end
     end)
+    refreshSettings=function()
+        for _,card in ipairs({themeCard,motionCard,preview}) do card.BackgroundColor3=panelColor end
+        themeHint.TextColor3=muted;motionHint.TextColor3=muted
+        picker.BackgroundColor3=selectedBackground;picker.TextColor3=accentColor
+        picker.Text=(themeDisplay[theme] or theme)..(menuOpen and "   −" or "   +")
+        previewText.Text=themeDisplay[theme] or theme;previewText.TextColor3=accentColor
+        menu.BackgroundColor3=dark
+        colorButton.Text=animatedColors and "ON" or "OFF"
+    end
 end
 
 local antiflingEnabled = false
@@ -655,16 +738,18 @@ refreshProtection = function()
 end
 
 local tabs = {}
+local tabMarks={}
 local selectedTab = 1
 local pages = {
-    {"Shaders", "SHADERS", "More Features soon", ""},
+    {"Shaders", "VISUALS", "Shaders", ""},
     {"NDS", "NDS", "Natural Disaster", ""},
-    {"Others scripts", "SCRIPTS (NOT MINE)", "Others scripts", "Tap a script to launch it."},
+    {"Other scripts", "COLLECTION", "Other scripts", "Tap a script to launch it."},
     {"Server", "SERVER", "Server", ""},
-    {"Settings", "PREFERENCES", "Select Your Theme | More soon", "Customize your interface."},
+    {"Settings", "PREFERENCES", "Appearance", ""},
 }
 
 local function selectTab(index)
+    closeThemes()
     selectedTab = index
     mainScroll.Visible = index == 1
     ndsScroll.Visible = index == 2
@@ -675,7 +760,8 @@ local function selectTab(index)
     for i, tab in ipairs(tabs) do
         tab.BackgroundColor3 = i == index
             and selectedBackground or idleTabColor
-        tab.TextColor3 = i == index and accentColor or muted
+        tab.TextColor3 = i == index and white or muted
+        if tabMarks[i] then tabMarks[i].Visible=i==index end
     end
 
     local page = pages[index]
@@ -686,16 +772,21 @@ local function selectTab(index)
     title.TextSize = index == 5 and 23 or 25
     local top = index == 1 and 78 or 105
     mainScroll.Position = UDim2.fromOffset(0, top)
-    mainScroll.Size = UDim2.fromOffset(498, 312 - top)
+    mainScroll.Size = UDim2.fromOffset(538, 342 - top)
 end
 
 for index, page in ipairs(pages) do
     local tab = button(
         sidebar, page[1],
-        UDim2.fromOffset(10, 45 + (index - 1) * 45),
-        UDim2.fromOffset(126, 39)
+        UDim2.fromOffset(10, 47 + (index - 1) * 49),
+        UDim2.fromOffset(144, 41)
     )
     if index == 3 then tab.TextSize = 13 end
+    tab.TextXAlignment=Enum.TextXAlignment.Left;tab.Font=Enum.Font.GothamBold;tab.TextSize=13
+    make("UIPadding",tab,{PaddingLeft=UDim.new(0,16)})
+    tabMarks[index]=make("Frame",tab,{Position=UDim2.fromOffset(-16,10),Size=UDim2.fromOffset(3,21),
+        BackgroundColor3=accentColor,BorderSizePixel=0,Visible=index==1})
+    round(tabMarks[index],2)
     tabs[index] = tab
     connect(tab.Activated, function() selectTab(index) end)
 end
@@ -706,20 +797,21 @@ selectTab(1)
 local function scriptButton(parent, name, url, order)
     local row = button(
         parent, "", UDim2.fromOffset(0, 0),
-        UDim2.new(1, 0, 0, 94)
+        UDim2.new(1, 0, 0, 86)
     )
     row.Name = name
     row.LayoutOrder = order
     row.AutoButtonColor = false
     row.BackgroundTransparency = 0
     local cardGradient = make("UIGradient", row, {Rotation = 15})
-    local cardStroke = gradientBorder(row, 1.6, 0.15)
+    local cardStroke = gradientBorder(row, 1.1, 0.5)
     local stripe = make("Frame", row, {
         Position = UDim2.fromOffset(0, 15),
         Size = UDim2.new(0, 4, 1, -30),
         BackgroundColor3 = pink, BorderSizePixel = 0,
     })
     round(stripe, 2)
+    label(row,"↗",UDim2.new(1,-42,0,24),UDim2.fromOffset(24,26),22,accentColor)
     local card = {
         row = row, gradient = cardGradient, stripe = stripe,
         stroke = cardStroke, hovered = false,
@@ -727,25 +819,25 @@ local function scriptButton(parent, name, url, order)
     table.insert(executableCards, card)
     connect(row.MouseEnter, function()
         card.hovered = true
-        cardStroke.Thickness = 2.4
+        cardStroke.Thickness = 1.8
         if paintColors then paintColors(colorClock) end
     end)
     connect(row.MouseLeave, function()
         card.hovered = false
-        cardStroke.Thickness = 1.6
+        cardStroke.Thickness = 1.1
         if paintColors then paintColors(colorClock) end
     end)
 
     local titleLabel = label(
         row, name, UDim2.fromOffset(20, 10),
-        UDim2.new(1, -40, 0, 42), 15
+        UDim2.new(1, -70, 0, 38), 15
     )
     titleLabel.Font = Enum.Font.GothamBold
     titleLabel.TextWrapped = true
 
     local stateLabel = label(
-        row, "EXECUTE  •  Tap to launch",
-        UDim2.fromOffset(20, 61),
+        row, "RUN SCRIPT    ›",
+        UDim2.fromOffset(20, 55),
         UDim2.new(1, -40, 0, 20),
         11, muted
     )
@@ -1788,8 +1880,8 @@ do
     local image=make("ImageLabel",launcher,{
         Name="LauncherLogo",Position=UDim2.fromOffset(2,2),Size=UDim2.new(1,-4,1,-4),
         BackgroundTransparency=1,BorderSizePixel=0,ZIndex=6,
-        Image="rbxassetid://132960411848659",ImageColor3=Color3.new(1,1,1),
-        ScaleType=Enum.ScaleType.Crop,Active=false,
+        Image="rbxassetid://115928147610604",ImageColor3=Color3.new(1,1,1),
+        ScaleType=Enum.ScaleType.Fit,Active=false,
     })
     round(image,10)
 end
@@ -1798,7 +1890,10 @@ local COLOR_CYCLE_SECONDS = 10
 local TAU = math.pi * 2
 local neutral = Color3.new(1, 1, 1)
 local function paletteColor(phase)
-    if theme == "Black / Grey / White" then
+    if theme == "Crimson" then
+        local pulse=.5+.5*math.sin(phase*TAU)
+        return Color3.fromRGB(180,15,36):Lerp(Color3.fromRGB(255,47,67),pulse)
+    elseif theme == "Black / Grey / White" then
         local value = 0.42 + 0.58 * (0.5 + 0.5 * math.sin(phase * TAU))
         return Color3.new(value, value, value)
     elseif theme == "Ocean Theme" then
@@ -1838,6 +1933,10 @@ paintColors = function(phase)
         idleTabColor = Color3.fromRGB(9, 25, 48)
         muted = Color3.fromRGB(166, 204, 227)
     end
+    if theme=="Crimson" then
+        dark=Color3.fromRGB(10,11,15);panelColor=Color3.fromRGB(21,22,29)
+        idleTabColor=Color3.fromRGB(16,17,23);muted=Color3.fromRGB(151,153,167)
+    end
     local a = paletteColor(phase)
     local b = paletteColor(phase + 0.25)
     local c = paletteColor(phase + 0.5)
@@ -1873,10 +1972,12 @@ paintColors = function(phase)
         accentColor = a:Lerp(neutral, 0.40)
     end
 
-    window.BackgroundColor3 = dark:Lerp(b, 0.10)
-    sidebar.BackgroundColor3 = dark:Lerp(c, 0.13)
+    window.BackgroundColor3 = dark:Lerp(b, 0.018)
+    sidebar.BackgroundColor3 = dark:Lerp(c, 0.04)
 
-    logo.TextColor3 = accentColor
+    hubCaption.TextColor3=muted
+    design.divider.BackgroundColor3=accentColor;design.footer.TextColor3=muted
+    for _,mark in ipairs(tabMarks) do mark.BackgroundColor3=accentColor end
     close.TextColor3 = accentColor
     eyebrow.TextColor3 = accentColor
     colorButton.TextColor3 = accentColor
@@ -1890,6 +1991,7 @@ paintColors = function(phase)
     refreshNDS()
     refreshProfile()
     refreshExtras()
+    refreshSettings()
     serverScroll.ScrollBarImageColor3=accentColor
 
     minimize.BackgroundColor3 = panelColor
@@ -1897,7 +1999,7 @@ paintColors = function(phase)
     colorButton.BackgroundColor3 = panelColor
     description.TextColor3 = muted
     for index, tab in ipairs(tabs) do
-        tab.TextColor3 = index == selectedTab and accentColor or muted
+        tab.TextColor3 = index == selectedTab and white or muted
         tab.BackgroundColor3 = index == selectedTab
             and selectedBackground or idleTabColor
     end
@@ -1912,9 +2014,9 @@ paintColors = function(phase)
     for _, card in ipairs(executableCards) do
         card.row.BackgroundColor3 = neutral
         card.gradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, dark:Lerp(a, card.hovered and 0.40 or 0.25)),
+            ColorSequenceKeypoint.new(0, dark:Lerp(a, card.hovered and 0.16 or 0.075)),
             ColorSequenceKeypoint.new(0.55, panelColor),
-            ColorSequenceKeypoint.new(1, dark:Lerp(c, 0.18)),
+            ColorSequenceKeypoint.new(1, dark:Lerp(c, 0.045)),
         })
         card.stripe.BackgroundColor3 = accentColor
     end
@@ -1924,11 +2026,15 @@ end
 
 paintColors(0)
 
+local paletteElapsed=0
 connect(RunService.RenderStepped, function(dt)
     if not animatedColors then return end
+    paletteElapsed=paletteElapsed+dt
+    if paletteElapsed<.05 then return end
+    dt=paletteElapsed;paletteElapsed=0
 
     colorClock = (
-        colorClock + math.min(dt, 1 / 15) / COLOR_CYCLE_SECONDS
+        colorClock + math.min(dt, .15) / COLOR_CYCLE_SECONDS
     ) % 1
 
     paintColors(colorClock)
@@ -1952,8 +2058,8 @@ local function clampWindow(x, y)
     local bounds = surface.AbsoluteSize
 
     window.Position = UDim2.fromOffset(
-        math.clamp(x, 0, math.max(0, bounds.X - 700 * scale.Scale)),
-        math.clamp(y, 0, math.max(0, bounds.Y - 410 * scale.Scale))
+        math.clamp(x, 0, math.max(0, bounds.X - 760 * scale.Scale)),
+        math.clamp(y, 0, math.max(0, bounds.Y - 450 * scale.Scale))
     )
 end
 
@@ -1964,14 +2070,14 @@ local function resize(center)
 
     scale.Scale = math.max(0.05, math.min(
         1,
-        (bounds.X - 20) / 700,
-        (bounds.Y - 20) / 410
+        (bounds.X - 20) / 760,
+        (bounds.Y - 20) / 450
     ))
 
     if center then
         clampWindow(
-            (bounds.X - 700 * scale.Scale) / 2,
-            (bounds.Y - 410 * scale.Scale) / 2
+            (bounds.X - 760 * scale.Scale) / 2,
+            (bounds.Y - 450 * scale.Scale) / 2
         )
     else
         clampWindow(
@@ -1989,6 +2095,7 @@ end
 local launcherScale=make("UIScale",launcher,{Scale=1})
 local function toggleMinimize()
     if windowAnimating or destroyed then return end
+    closeThemes()
     windowAnimating=true
     local home=window.Position
     local duration=0.34
@@ -2278,7 +2385,7 @@ do
     round(avatar,9)
     local toastLogo=make("ImageLabel",avatar,{
         Name="HubLogo",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),
-        Image="rbxassetid://132960411848659",ImageColor3=Color3.new(1,1,1),
+        Image="rbxassetid://115928147610604",ImageColor3=Color3.new(1,1,1),
         ScaleType=Enum.ScaleType.Fit,
     })
     round(toastLogo,9)
@@ -2325,5 +2432,4 @@ do
         task.delay(4.2,dismissToast)
     end)
 end
-
 
