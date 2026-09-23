@@ -88,6 +88,80 @@ local function button(parent, text, position, size)
     return object
 end
 
+-- Shared NoFallDamage: one sampler for Hub + Fly, regardless of activation order.
+local function acquireNoFall(owner)
+    local service=playerGui:FindFirstChild("HzReyzn_NoFallDamage_v2")
+    if not service then
+        service=Instance.new("Folder")
+        service.Name="HzReyzn_NoFallDamage_v2"
+        local pending,closed=nil,false
+        local links={}
+        local function eligible(model,h,r)
+            return model==player.Character and model.Parent and h.Parent==model and r.Parent==model
+                and h.Health>0 and not r.Anchored and not h.SeatPart and not h.Sit
+                and not h.PlatformStand and not h.Jump and h.FloorMaterial==Enum.Material.Air
+                and h:GetState()==Enum.HumanoidStateType.Freefall
+                and not r:FindFirstChild("HZFlightVelocity")
+        end
+        local function restore()
+            local sample=pending;pending=nil
+            if not sample or not eligible(sample.model,sample.hum,sample.root) then return end
+            local current=sample.root.AssemblyLinearVelocity
+            -- A jump, impulse or another controller owns any newly changed Y velocity.
+            -- Never replay an old horizontal velocity over player input or earthquake control.
+            if math.abs(current.Y)>0.001 then return end
+            sample.root.AssemblyLinearVelocity=Vector3.new(current.X,sample.y,current.Z)
+        end
+        local function stop()
+            if closed then return end
+            closed=true;restore()
+            for _,c in ipairs(links) do c:Disconnect() end
+            table.clear(links)
+        end
+        local function listen(signal,callback)
+            links[#links+1]=signal:Connect(callback)
+        end
+        listen(service.Destroying,stop)
+        -- Restore before animations/physics even when rendering is throttled.
+        listen(RunService.PreAnimation,restore)
+        listen(RunService.PreSimulation,restore)
+        listen(RunService.RenderStepped,restore)
+        listen(player.CharacterRemoving,function(model)
+            if pending and pending.model==model then pending=nil end
+        end)
+        listen(RunService.Heartbeat,function()
+            if closed then return end
+            restore()
+            local model=player.Character
+            local h=model and model:FindFirstChildOfClass("Humanoid")
+            local r=model and model:FindFirstChild("HumanoidRootPart")
+            if not h or not r or not eligible(model,h,r) then return end
+            local velocity=r.AssemblyLinearVelocity
+            if velocity.Y>=-1 then return end
+            pending={model=model,hum=h,root=r,y=velocity.Y}
+            r.AssemblyLinearVelocity=Vector3.new(velocity.X,0,velocity.Z)
+        end)
+        service.Parent=playerGui
+    end
+    local lease=Instance.new("ObjectValue")
+    lease.Name=owner.Name;lease.Value=owner;lease.Parent=service
+    local released,ownerConnection=false,nil
+    local function release()
+        if released then return end
+        released=true
+        if ownerConnection then ownerConnection:Disconnect() end
+        lease:Destroy()
+        if not service.Parent then return end
+        for _,child in ipairs(service:GetChildren()) do
+            if child:IsA("ObjectValue") and child.Value and child.Value.Parent then return end
+        end
+        service:Destroy()
+    end
+    ownerConnection=owner.Destroying:Connect(release)
+    return release
+end
+-- End shared NoFallDamage.
+
 local gui = make("ScreenGui", playerGui, {
     Name = "HzReyznInterface",
     IgnoreGuiInset = true,
@@ -1145,6 +1219,206 @@ scriptButton(
     -1
 )
 
+-- Anti Earthquake adapter: the standalone body below is preserved byte for byte.
+do
+    local function createEarthquakeController()
+-- BEGIN ORIGINAL AntiEarthquake-NDS.lua
+-- HzReyzn Anti Earthquake: standalone test, horizontal stabilization only.
+local Players=game:GetService('Players')
+local Run=game:GetService('RunService')
+local UIS=game:GetService('UserInputService')
+local player=Players.LocalPlayer
+local pg=player:WaitForChild('PlayerGui')
+local old=pg:FindFirstChild('HZAntiEarthquake')
+if old then old:Destroy() end
+local gui=Instance.new('ScreenGui');gui.Name='HZAntiEarthquake';gui.ResetOnSpawn=false;gui.Parent=pg
+local frame=Instance.new('Frame');frame.Size=UDim2.fromOffset(250,104);frame.Position=UDim2.fromScale(.35,.25);frame.BackgroundColor3=Color3.fromRGB(13,19,40);frame.Parent=gui
+local corner=Instance.new('UICorner');corner.CornerRadius=UDim.new(0,12);corner.Parent=frame
+local function button(text,pos,size)
+ local b=Instance.new('TextButton');b.Text=text;b.Position=pos;b.Size=size;b.BackgroundColor3=Color3.fromRGB(43,77,165);b.TextColor3=Color3.new(1,1,1);b.Font=Enum.Font.GothamBold;b.TextSize=13;b.Parent=frame
+ local c=Instance.new('UICorner');c.Parent=b
+ return b
+end
+local title=button('HzReyzn | Anti Earthquake',UDim2.fromOffset(8,7),UDim2.fromOffset(204,30))
+local close=button('×',UDim2.fromOffset(218,7),UDim2.fromOffset(25,30))
+local toggle=button('OFF',UDim2.fromOffset(10,49),UDim2.fromOffset(230,42))
+local enabled=false
+local cons={}
+local function connect(signal,fn) local c=signal:Connect(fn);table.insert(cons,c);return c end
+local attachment,mover,boundRoot,hold
+local idleTrack,idleHum,idleAttempt=nil,nil,0
+local function releaseIdle()
+ if idleTrack then idleTrack:Stop(.15);idleTrack:Destroy() end
+ idleTrack,idleHum=nil,nil
+end
+local function updateIdle(char,h,active)
+ if not active then
+  if idleTrack and idleTrack.IsPlaying then idleTrack:Stop(.08) end
+  return
+ end
+ if idleHum~=h then releaseIdle();idleAttempt=0 end
+ if not idleTrack and os.clock()>=idleAttempt then
+  idleAttempt=os.clock()+2
+  local animate=char:FindFirstChild('Animate')
+  local folder=animate and animate:FindFirstChild('idle')
+  local animator=h:FindFirstChildOfClass('Animator')
+  local chosen,bestWeight=nil,-1
+  if folder then
+   for _,a in ipairs(folder:GetDescendants()) do
+    if a:IsA('Animation') and a.AnimationId~='' then
+     local w=a:FindFirstChild('Weight');local weight=w and w.Value or 1
+     if weight>bestWeight then chosen=a;bestWeight=weight end
+    end
+   end
+  end
+  if chosen and animator then
+   local ok,t=pcall(function() return animator:LoadAnimation(chosen) end)
+   if ok then idleTrack=t;idleHum=h;t.Priority=Enum.AnimationPriority.Movement;t.Looped=true end
+
+  end
+ end
+ if idleTrack then
+  -- Overlay only our idle; leave the character's native animation tracks running.
+  if not idleTrack.IsPlaying then idleTrack:Play(.18) end
+ end
+end
+local nearby,nextScan={},0
+local overlap=OverlapParams.new();overlap.FilterType=Enum.RaycastFilterType.Exclude
+local function belongsToCharacter(part)
+ local a=part
+ while a and a~=workspace do
+  if a:IsA('Model') and a:FindFirstChildOfClass('Humanoid') then return true end
+  if a:IsA('Tool') then return true end
+  a=a.Parent
+ end
+ return false
+end
+local function dampNearby(char,r,dt)
+ if os.clock()>=nextScan then
+  nextScan=os.clock()+.12;nearby={};overlap.FilterDescendantsInstances={char}
+  local seen={}
+  for _,part in ipairs(workspace:GetPartBoundsInRadius(r.Position,8,overlap)) do
+   local assembly=part.AssemblyRootPart
+   if assembly and not assembly.Anchored and not seen[assembly] then
+    seen[assembly]=true
+    local safe=not belongsToCharacter(assembly)
+    if safe then for _,connected in ipairs(assembly:GetConnectedParts(true)) do
+     if belongsToCharacter(connected) then safe=false;break end
+    end end
+    if safe then table.insert(nearby,{part=part,root=assembly}) end
+   end
+  end
+ end
+ local factor=math.exp(-18*math.clamp(dt,0,.1))
+ for _,entry in ipairs(nearby) do
+  local part,assembly=entry.part,entry.root
+  if part.Parent and assembly.Parent and not assembly.Anchored and not belongsToCharacter(assembly) then
+   local point=part.CFrame:PointToObjectSpace(r.Position)
+   local half=part.Size*.5
+   local nearest=Vector3.new(math.clamp(point.X,-half.X,half.X),math.clamp(point.Y,-half.Y,half.Y),math.clamp(point.Z,-half.Z,half.Z))
+   if (point-nearest).Magnitude<=8 then
+    local v=assembly.AssemblyLinearVelocity
+    assembly.AssemblyLinearVelocity=Vector3.new(v.X*factor,v.Y,v.Z*factor)
+    assembly.AssemblyAngularVelocity=assembly.AssemblyAngularVelocity*factor
+   end
+  end
+ end
+end
+local function clear()
+ releaseIdle();nearby={};nextScan=0
+ if mover then mover:Destroy() end
+ if attachment then attachment:Destroy() end
+ attachment,mover,boundRoot,hold=nil,nil,nil,nil
+end
+connect(toggle.Activated,function() enabled=not enabled;toggle.Text=enabled and 'ON' or 'OFF';clear() end)
+local drag,start,pos
+connect(title.InputBegan,function(i)
+ if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then drag=i;start=i.Position;pos=frame.Position end
+end)
+connect(UIS.InputChanged,function(i)
+ if drag and (i==drag or i.UserInputType==Enum.UserInputType.MouseMovement) then
+ local d=i.Position-start;frame.Position=UDim2.new(pos.X.Scale,pos.X.Offset+d.X,pos.Y.Scale,pos.Y.Offset+d.Y) end
+end)
+connect(UIS.InputEnded,function(i) if i==drag then drag=nil end end)
+connect(Run.PreSimulation,function(dt)
+ local char=player.Character
+ local h=char and char:FindFirstChildOfClass('Humanoid')
+ local r=char and char:FindFirstChild('HumanoidRootPart')
+ if not enabled or not h or not r or h.Health<=0 or r.Anchored or h.SeatPart or h.PlatformStand or r:FindFirstChild('HZFlightVelocity') then clear();return end
+ if boundRoot~=r then
+  clear();boundRoot=r
+  attachment=Instance.new('Attachment');attachment.Name='HZQuakeAttachment';attachment.Parent=r
+  mover=Instance.new('LinearVelocity');mover.Name='HZQuakeStabilizer';mover.Attachment0=attachment
+  mover.RelativeTo=Enum.ActuatorRelativeTo.World;mover.VelocityConstraintMode=Enum.VelocityConstraintMode.Plane
+  mover.PrimaryTangentAxis=Vector3.xAxis;mover.SecondaryTangentAxis=Vector3.zAxis
+  mover.ForceLimitsEnabled=true;mover.ForceLimitMode=Enum.ForceLimitMode.Magnitude
+  mover.Enabled=false;mover.Parent=r
+ end
+ local state=h:GetState()
+ local grounded=h.FloorMaterial~=Enum.Material.Air and not h.Jump and state~=Enum.HumanoidStateType.Jumping and state~=Enum.HumanoidStateType.Freefall
+ mover.Enabled=grounded
+ if not grounded then hold=nil;updateIdle(char,h,false);dampNearby(char,r,dt);return end
+ mover.MaxForce=math.max(r.AssemblyMass,1)*6000
+ local move=h.MoveDirection
+ updateIdle(char,h,move.Magnitude<=.05)
+ dampNearby(char,r,dt)
+ local target=Vector3.new(move.X,0,move.Z)*h.WalkSpeed
+ if move.Magnitude>.05 then hold=nil else
+  hold=hold or r.Position
+  local error=Vector3.new(hold.X-r.Position.X,0,hold.Z-r.Position.Z)
+  if error.Magnitude>8 then hold=r.Position;error=Vector3.zero end
+  target=error*12
+  if target.Magnitude>20 then target=target.Unit*20 end
+ end
+ mover.PlaneVelocity=Vector2.new(target.X,target.Z)
+end)
+connect(gui.Destroying,function() clear();for _,c in ipairs(cons) do c:Disconnect() end end)
+connect(close.Activated,function() gui:Destroy() end)
+-- END ORIGINAL AntiEarthquake-NDS.lua
+        -- Integration only: hide its standalone window and expose its existing state.
+        gui.Enabled=false
+        return {
+            Gui=gui,
+            SetEnabled=function(on)
+                if not gui.Parent then return false end
+                on=on==true
+                if enabled~=on then enabled=on;toggle.Text=on and 'ON' or 'OFF';clear() end
+                return true
+            end,
+        }
+    end
+    local earthquake,earthquakeWatch
+    local row=button(ndsScroll,"",UDim2.fromOffset(0,0),UDim2.new(1,0,0,60))
+    row.Name="Toggle_earthquake";row.LayoutOrder=1.25
+    local skin=styleControl(row,"toggle","Anti Earthquake")
+    local function discardEarthquake()
+        if earthquakeWatch then earthquakeWatch:Disconnect();earthquakeWatch=nil end
+        local current=earthquake;earthquake=nil
+        if current then current.Gui:Destroy() end
+    end
+    connect(row.Activated,function()
+        local on=not skin.Active
+        local ok,err=pcall(function()
+            if on and (not earthquake or not earthquake.Gui.Parent) then
+                discardEarthquake()
+                earthquake=createEarthquakeController()
+                local current=earthquake
+                earthquakeWatch=current.Gui.Destroying:Connect(function()
+                    if earthquake==current then earthquake=nil;skin:SetActive(false) end
+                end)
+            end
+            if earthquake then assert(earthquake.SetEnabled(on),"Earthquake controller closed") end
+            skin:SetActive(on)
+        end)
+        if not ok then
+            discardEarthquake();skin:SetActive(false)
+            warn("HzReyzn Anti Earthquake: "..tostring(err))
+        end
+    end)
+    connect(gui.Destroying,discardEarthquake)
+end
+-- End Anti Earthquake adapter.
+
 local externalScripts = {
     {
         "Super Ring Parts",
@@ -1379,11 +1653,7 @@ do
     local characterConnections = {}
     local pendingFloor = false
     local floorRising = false
-    local savedRoot, savedVelocity
-    local function restoreVelocity()
-        if savedRoot and savedRoot.Parent then savedRoot.AssemblyLinearVelocity = savedVelocity end
-        savedRoot, savedVelocity = nil, nil
-    end
+    local releaseNoFall
     local function armFloor()
         if flags.float and not pendingFloor then
             pendingFloor = true
@@ -1857,7 +2127,8 @@ do
             nextWaterScan=0
             if not on then clearWater();waterCandidates={} end
         elseif key == "nofall" then
-            if not on then restoreVelocity() end
+            if on and not releaseNoFall then releaseNoFall=acquireNoFall(gui)
+            elseif not on and releaseNoFall then releaseNoFall();releaseNoFall=nil end
         elseif key == "float" then
             if not on then clearFloors() end
         end
@@ -1924,7 +2195,6 @@ do
     refreshNDS()
 
     local function bind(model)
-        restoreVelocity()
         if jumpConnection then jumpConnection:Disconnect();jumpConnection=nil end
         for _,c in ipairs(characterConnections) do c:Disconnect() end
         table.clear(characterConnections)
@@ -2034,7 +2304,6 @@ do
     end
     local scanClock,speedClock=0,0
     connect(RunService.PreSimulation,function(dt)
-        restoreVelocity()
         if destroyed then return end
         if not resolveCharacter(true) then
             clearWater()
@@ -2067,16 +2336,8 @@ do
             if scanClock>=0.12 then scanClock=0;scanWalls() end
         end
     end)
-    -- Match the tested Heartbeat/render method without yielding callbacks.
-    connect(RunService.Heartbeat,function()
-        restoreVelocity()
-        if destroyed or not flags.nofall or not resolveCharacter() then return end
-        savedRoot, savedVelocity = root, root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = Vector3.zero
-    end)
-    connect(RunService.RenderStepped,restoreVelocity)
     cleanupNDS=function()
-        restoreVelocity()
+        if releaseNoFall then releaseNoFall();releaseNoFall=nil end
         for key in pairs(flags) do flags[key]=false end
         if jumpConnection then jumpConnection:Disconnect();jumpConnection=nil end
         for _,c in ipairs(characterConnections) do c:Disconnect() end
