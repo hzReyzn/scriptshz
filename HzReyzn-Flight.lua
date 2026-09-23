@@ -2,7 +2,7 @@
 -- Vertical flight: Super Saiyan Goku DBZ, bundle 2544001591229.
 -- Catalog package IDs verified via Roblox bundle-details API.
 -- Packages are containers, not AnimationTrack IDs. Resolve their Animation children.
--- Load failures are reported; no substituted/default poses, no client-only Animator.
+-- Rebind on each spawn; animation loading never locks the flight controls.
 local AuraPackages = {
     Idle=120958034769772, Walk=72284671228879, Run=110304356621538,
     Jump=87680156695778, Fall=132479078338047,
@@ -24,6 +24,7 @@ local speed = 50
 local loadingFinished=false
 local gfx = true
 local wakePart, wakeBeams, wakeClock = nil, {}, 0
+local auraLight, takeoffPulse, pulseAt
 local flightControls
 -- Read the native joystick/keyboard input before projecting onto camera pitch.
 task.spawn(function()
@@ -42,6 +43,7 @@ local function restoreFallVelocity()
     protectedRoot,protectedVelocity=nil,nil
 end
 local character, humanoid, root, animator, oldAuto, oldStand
+local bindingModel
 local flightAttachment, velocityMover, orientationMover
 local tracks, localObjects, emitters, trails = {}, {}, {}, {}
 local trackName, state = nil, "Ready"
@@ -167,6 +169,8 @@ connect(gfxButton.Activated,function()
         for _,e in ipairs(emitters) do e.Enabled=false;e:Clear() end
         for _,t in ipairs(trails) do t.Enabled=false;t:Clear() end
         for _,beam in ipairs(wakeBeams) do beam.Enabled=false end
+        if auraLight then auraLight.Enabled=false end
+        if takeoffPulse then takeoffPulse.Transparency=1 end
     end
 end)
 connect(UIS.WindowFocusReleased,function() drag=nil end)
@@ -184,7 +188,10 @@ local function play(name)
     if currentTrack==t and t.IsPlaying then trackName=name;return end
     stopTracks();currentTrack=t;trackName=name
     local ok=pcall(function() t:Play(0.22,1,1) end)
-    if not ok then animationError="Animation playback failed";animationsReady=false end
+    if not ok then
+        animationError="Animation playback failed";animationsReady=false;tracks[group]=nil;currentTrack=nil
+        pcall(function() t:Destroy() end)
+    end
 end
 local function resolvePackage(group,id)
     if resolvedAura[group] then return resolvedAura[group] end
@@ -207,74 +214,96 @@ local function resolvePackage(group,id)
 end
 local function loadTracks(token,h,sourceAnimator)
     local pending={}
+    local function current()
+        return not dead and token==generation and h==humanoid and h.Health>0
+            and character==player.Character and sourceAnimator and sourceAnimator.Parent==h
+    end
     local function discard()
         for _,track in pairs(pending) do track:Destroy() end
     end
     local function fail(message)
         discard()
-        if not dead and token==generation then animationError=message;animationsReady=false;status.Text=message;toggle.Text="ERROR";warn("HzReyzn Fly: "..message) end
+        if not dead and token==generation then animationError=message;animationsReady=false;status.Text=message end
         return false
     end
     if h.RigType~=Enum.HumanoidRigType.R15 then return fail("Super Aura Blur requires R15") end
     if not sourceAnimator then return fail("Character Animator missing") end
     for _,group in ipairs({"Idle","Walk","Run","Jump","Fall","Climb","Descend"}) do
-        if dead or token~=generation then discard();return false end
+        if not current() then discard();return false end
         status.Text="Loading Aura: "..group
         local id,err=resolvePackage(group,AuraPackages[group])
-        if dead or token~=generation then discard();return false end
+        if not current() then discard();return false end
         if not id then return fail(err) end
         local a=Instance.new("Animation");a.AnimationId=id
         local ok,t=pcall(function() return sourceAnimator:LoadAnimation(a) end)
         a:Destroy()
-        if not ok then return fail("Cannot load "..group.." animation") end
+        if not ok or not t then return fail("Cannot load "..group.." animation") end
         t.Priority=Enum.AnimationPriority.Action;t.Looped=true;pending[group]=t
     end
     local deadline=os.clock()+10
-    while not dead and token==generation do
+    while current() do
         local ready=true
         for _,t in pairs(pending) do if t.Length<=0 then ready=false;break end end
         if ready then break end
         if os.clock()>=deadline then return fail("Aura blocked or loading timed out") end
         task.wait(0.1)
     end
-    if dead or token~=generation then discard();return false end
+    if not current() then discard();return false end
+    stopTracks()
+    for _,oldTrack in pairs(tracks) do pcall(function() oldTrack:Destroy() end) end
     tracks=pending;animationsReady=true;animationError=nil;currentTrack=nil
     return true
 end
 local function own(o) table.insert(localObjects,o);return o end
 local function makeEffects()
-    -- Local-only layered white/ice wake inspired by the reference video.
-    for i,offset in ipairs({Vector3.new(-1.1,0,0),Vector3.new(1.1,0,0),Vector3.new(0,0.7,0),Vector3.new(0,-0.9,0)}) do
-        local half=i<=2 and 0.3 or 0.5
+    -- Short cobalt trails, a soft aura and three smooth streams with an ice-white core.
+    -- Everything is local and reused until the next character spawns.
+    for _,offset in ipairs({Vector3.new(-1.05,0,0),Vector3.new(1.05,0,0),Vector3.new(0,0.75,0),Vector3.new(0,-0.8,0)}) do
+        local half=0.14
         local a=own(make("Attachment",root,{Name="HZIceTrail",Position=offset-Vector3.new(half,0,0)}))
         local b=own(make("Attachment",root,{Name="HZIceTrail",Position=offset+Vector3.new(half,0,0)}))
         local trail=own(make("Trail",root,{
-            Attachment0=a,Attachment1=b,Enabled=false,Lifetime=0.7,
-            MinLength=0.05,FaceCamera=true,LightEmission=1,LightInfluence=0,
-            WidthScale=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.35,0.8),NumberSequenceKeypoint.new(1,0)}),
-            Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.22),NumberSequenceKeypoint.new(0.5,0.48),NumberSequenceKeypoint.new(1,1)}),
+            Attachment0=a,Attachment1=b,Enabled=false,Lifetime=0.34,
+            MinLength=0.03,FaceCamera=true,LightEmission=1,LightInfluence=0,
+            WidthScale=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.25,0.7),NumberSequenceKeypoint.new(1,0)}),
+            Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.18),NumberSequenceKeypoint.new(0.45,0.55),NumberSequenceKeypoint.new(1,1)}),
         }))
         table.insert(trails,trail)
     end
     local a=own(make("Attachment",root,{Name="HZIceAura"}))
     local e=own(make("ParticleEmitter",a,{
-        Enabled=false,Rate=12,Lifetime=NumberRange.new(0.18,0.4),Speed=NumberRange.new(2,6),
+        Name="FlightSparks",Enabled=false,Rate=10,Lifetime=NumberRange.new(0.25,0.5),Speed=NumberRange.new(1,3),
         SpreadAngle=Vector2.new(180,180),Texture="rbxasset://textures/particles/sparkles_main.dds",
-        LightEmission=1,LightInfluence=0,Size=NumberSequence.new({NumberSequenceKeypoint.new(0,0.3),NumberSequenceKeypoint.new(1,0)}),
-        Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.2),NumberSequenceKeypoint.new(1,1)}),
+        LightEmission=1,LightInfluence=0,Drag=2,Size=NumberSequence.new({NumberSequenceKeypoint.new(0,0.12),NumberSequenceKeypoint.new(0.2,0.2),NumberSequenceKeypoint.new(1,0)}),
+        Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.3),NumberSequenceKeypoint.new(1,1)}),
     }))
     table.insert(emitters,e)
+    table.insert(emitters,own(make("ParticleEmitter",a,{
+        Name="CobaltAura",Enabled=false,Rate=6,Lifetime=NumberRange.new(0.4,0.65),Speed=NumberRange.new(0.3,0.8),
+        SpreadAngle=Vector2.new(180,180),Texture="rbxasset://textures/particles/smoke_main.dds",
+        LightEmission=1,LightInfluence=0,LockedToPart=true,Rotation=NumberRange.new(0,360),RotSpeed=NumberRange.new(-20,20),
+        Size=NumberSequence.new({NumberSequenceKeypoint.new(0,1.4),NumberSequenceKeypoint.new(1,3.2)}),
+        Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.2,0.88),NumberSequenceKeypoint.new(1,1)}),
+    })))
+    auraLight=own(make("PointLight",root,{Name="HZLocalAuraLight",Enabled=false,Color=accent,Brightness=0.6,Range=8,Shadows=false}))
+    takeoffPulse=own(make("Part",workspace,{Name="HZLocalTakeoffPulse",Shape=Enum.PartType.Ball,
+        Material=Enum.Material.Neon,Color=accent,Size=Vector3.new(1,1,1),Transparency=1,
+        Anchored=true,CanCollide=false,CanTouch=false,CanQuery=false,CastShadow=false}))
     wakePart=own(make("Part",workspace,{Name="HZLocalIceWake",Size=Vector3.new(0.1,0.1,0.1),Transparency=1,Anchored=true,CanCollide=false,CanTouch=false,CanQuery=false,CastShadow=false}))
-    for i=1,10 do
-        local a0=make("Attachment",wakePart,{Name="WakeStart"..i})
-        local a1=make("Attachment",wakePart,{Name="WakeEnd"..i})
-        local beam=make("Beam",wakePart,{
-            Attachment0=a0,Attachment1=a1,Enabled=false,FaceCamera=true,Segments=8,
-            Width0=i<=2 and 0.38 or 0.055,Width1=0.015,LightEmission=1,LightInfluence=0,
-            Color=ColorSequence.new(Color3.new(1,1,1),accent),
-            Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.15),NumberSequenceKeypoint.new(0.7,0.4),NumberSequenceKeypoint.new(1,1)}),
-        })
-        table.insert(wakeBeams,beam)
+    for lane=1,3 do
+        local a0=make("Attachment",wakePart,{Name="WakeStart"..lane})
+        local a1=make("Attachment",wakePart,{Name="WakeEnd"..lane})
+        for layer=1,2 do
+            local core=layer==2
+            local beam=make("Beam",wakePart,{
+                Attachment0=a0,Attachment1=a1,Enabled=false,FaceCamera=true,Segments=10,
+                Width0=core and 0.045 or 0.32,Width1=0.005,LightEmission=1,LightInfluence=0,
+                Color=core and ColorSequence.new(Color3.fromRGB(238,252,255),Color3.fromRGB(128,189,255))
+                    or ColorSequence.new(Color3.fromRGB(104,172,255),accent),
+                Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,core and 0.16 or 0.75),NumberSequenceKeypoint.new(0.65,core and 0.5 or 0.86),NumberSequenceKeypoint.new(1,1)}),
+            })
+            table.insert(wakeBeams,beam)
+        end
     end
     paint()
 end
@@ -282,27 +311,42 @@ local function updateWake(dt)
     if not wakePart or not root then return end
     local magnitude=smoothedVelocity.Magnitude
     local active=flying and gfx and magnitude>8
+    if auraLight then
+        auraLight.Enabled=flying and gfx
+        auraLight.Brightness=0.55+math.min(magnitude/200,0.35)
+    end
+    if takeoffPulse and pulseAt then
+        local progress=math.clamp((os.clock()-pulseAt)/0.48,0,1)
+        local size=2+7*(1-(1-progress)^2)
+        takeoffPulse.Size=Vector3.new(size,size,size)
+        takeoffPulse.Transparency=gfx and (0.87+progress*0.13) or 1
+        if progress>=1 then pulseAt=nil end
+    end
     for _,beam in ipairs(wakeBeams) do beam.Enabled=active end
     if not active then return end
     local heading=smoothedVelocity.Unit
     local axis=math.abs(heading.Y)>0.95 and Vector3.xAxis or Vector3.yAxis
     wakePart.CFrame=CFrame.lookAt(root.Position,root.Position+heading,axis)
     wakeClock=wakeClock+dt
-    if wakeClock<0.055 then return end
+    if wakeClock<1/30 then return end
     wakeClock=0
-    local length=math.clamp(magnitude*0.38,10,55)
+    local length=math.clamp(magnitude*0.24,4,30)
     for i,beam in ipairs(wakeBeams) do
-        local angle=i*math.pi/5+clock*0.65
-        local radius=i<=2 and 0.5 or 1.1+0.25*math.sin(clock*3+i)
+        local lane=math.ceil(i/2)
+        local angle=(lane-1)*math.pi*2/3+clock*0.35
+        local radius=0.85+0.1*math.sin(clock*1.6+lane)
         local x,y=math.cos(angle)*radius,math.sin(angle)*radius
         beam.Attachment0.Position=Vector3.new(x,y,0.6)
-        beam.Attachment1.Position=Vector3.new(x*1.8+math.sin(clock*13+i)*0.6,y*1.8,length*(0.7+i*0.035))
-        beam.CurveSize0=math.sin(clock*5+i)*1.1
-        beam.CurveSize1=math.cos(clock*4+i)*0.8
+        beam.Attachment1.Position=Vector3.new(x*1.6,y*1.6,length*(0.85+lane*0.05))
+        beam.CurveSize0=math.sin(clock*1.6+lane)*0.5
+        beam.CurveSize1=math.cos(clock*1.4+lane)*0.4
     end
 end
 local function releaseMovers()
-    for _,o in ipairs({velocityMover,orientationMover,flightAttachment}) do if o then o:Destroy() end end
+    -- A partially built set must also clean up; ipairs stops at the first nil.
+    if velocityMover then velocityMover:Destroy() end
+    if orientationMover then orientationMover:Destroy() end
+    if flightAttachment then flightAttachment:Destroy() end
     velocityMover,orientationMover,flightAttachment=nil,nil,nil
 end
 local function endFlight(withFall)
@@ -317,6 +361,8 @@ local function endFlight(withFall)
     for _,e in ipairs(emitters) do e.Enabled=false end
     for _,t in ipairs(trails) do t.Enabled=false end
     for _,beam in ipairs(wakeBeams) do beam.Enabled=false end
+    if auraLight then auraLight.Enabled=false end
+    if takeoffPulse then takeoffPulse.Transparency=1 end
 end
 local function resetCharacter()
     restoreFallVelocity()
@@ -326,43 +372,79 @@ local function resetCharacter()
     for _,t in pairs(tracks) do pcall(function() t:Destroy() end) end
     for _,o in ipairs(localObjects) do o:Destroy() end
     tracks={};localObjects={};emitters={};trails={};wakeBeams={};wakePart=nil;animationsReady=false;currentTrack=nil
+    auraLight,takeoffPulse,pulseAt=nil,nil,nil
+    animationError=nil;wakeClock=0;bindingModel=nil;state="Ready";toggle.Text="ON"
     character,humanoid,root,animator=nil,nil,nil,nil
 end
 local function bind(model)
     generation=generation+1;local token=generation
-    resetCharacter();status.Text="Waiting for character"
+    resetCharacter();bindingModel=model;status.Text="Waiting for character";toggle.Text="..."
+    local function current()
+        return not dead and token==generation and player.Character==model and bindingModel==model
+    end
     task.spawn(function()
-        local h=model:WaitForChild("Humanoid",10)
-        local r=model:WaitForChild("HumanoidRootPart",10)
-        if dead or token~=generation or not h or not r or player.Character~=model then return end
+        local h,r
+        while current() do
+            h=model:FindFirstChildOfClass("Humanoid");r=model:FindFirstChild("HumanoidRootPart")
+            if h and h.Health<=0 then return end
+            if h and r and model:IsDescendantOf(workspace) then break end
+            task.wait(.1)
+        end
+        if not current() then return end
         character,humanoid,root=model,h,r
-        animator=h:FindFirstChildOfClass("Animator")
-        if not loadTracks(token,h,animator) then return end
-        if dead or token~=generation then return end
+        connect(h.Died,function()
+            if not current() then return end
+            generation=generation+1;resetCharacter();status.Text="Waiting for respawn";toggle.Text="..."
+        end,characterConnections)
         makeEffects()
-        connect(h.Died,function() endFlight(false);fallAt=nil end,characterConnections)
-        status.Text="Super Aura Blur · ready"
+        toggle.Text="ON";status.Text="Ready";paint()
+        -- The replicated Animator can arrive after CharacterAdded. Never create a local replacement.
+        local attempts=0
+        while current() and h.Health>0 and attempts<3 do
+            local candidate=h:FindFirstChildOfClass("Animator")
+            if candidate then
+                animator=candidate;attempts=attempts+1
+                if loadTracks(token,h,candidate) then
+                    if current() then status.Text="Super Aura Blur · ready" end
+                    return
+                end
+                if not current() then return end
+                if h.RigType~=Enum.HumanoidRigType.R15 then break end
+            end
+            task.wait(candidate and math.min(attempts,2) or .1)
+        end
+        if current() and animationError then warn("HzReyzn Fly animations: "..animationError) end
     end)
 end
 local function startFlight()
     if dead or not loadingFinished or flying or not humanoid or not root or not root.Parent or humanoid.Health<=0 then return end
-    if not animationsReady then status.Text=animationError or "Loading Super Aura Blur";return end
     if humanoid.SeatPart or root.Anchored then status.Text="Stand up to fly";return end
     restoreFallVelocity()
-    fallAt=nil;flying=true;takeoffAt=os.clock();oldAuto=humanoid.AutoRotate;oldStand=humanoid.PlatformStand
-    humanoid.AutoRotate=false;humanoid.PlatformStand=true;humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-    flightAttachment=make("Attachment",root,{Name="HZFlightControl"})
-    velocityMover=make("LinearVelocity",root,{Name="HZFlightVelocity",Attachment0=flightAttachment,RelativeTo=Enum.ActuatorRelativeTo.World,VelocityConstraintMode=Enum.VelocityConstraintMode.Vector,ForceLimitsEnabled=false,VectorVelocity=Vector3.new(0,12,0)})
-    orientationMover=make("AlignOrientation",root,{Name="HZFlightOrientation",Attachment0=flightAttachment,Mode=Enum.OrientationAlignmentMode.OneAttachment,MaxTorque=math.huge,Responsiveness=18,RigidityEnabled=false,CFrame=root.CFrame.Rotation})
+    fallAt=nil;takeoffAt=os.clock();oldAuto=humanoid.AutoRotate;oldStand=humanoid.PlatformStand
+    local ok,err=pcall(function()
+        flightAttachment=make("Attachment",root,{Name="HZFlightControl"})
+        velocityMover=make("LinearVelocity",root,{Name="HZFlightVelocity",Attachment0=flightAttachment,RelativeTo=Enum.ActuatorRelativeTo.World,VelocityConstraintMode=Enum.VelocityConstraintMode.Vector,ForceLimitsEnabled=false,VectorVelocity=Vector3.new(0,12,0)})
+        orientationMover=make("AlignOrientation",root,{Name="HZFlightOrientation",Attachment0=flightAttachment,Mode=Enum.OrientationAlignmentMode.OneAttachment,MaxTorque=math.huge,Responsiveness=18,RigidityEnabled=false,CFrame=root.CFrame.Rotation})
+        humanoid.AutoRotate=false;humanoid.PlatformStand=true;humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+    end)
+    if not ok then
+        releaseMovers();humanoid.AutoRotate=oldAuto;humanoid.PlatformStand=oldStand
+        status.Text="Try flight again";warn("HzReyzn Fly: "..tostring(err));return
+    end
+    flying=true;pulseAt=gfx and os.clock() or nil
+    if takeoffPulse then takeoffPulse.CFrame=root.CFrame;takeoffPulse.Transparency=1 end
     smoothedVelocity=Vector3.new(0,12,0);state="Takeoff";play(state)
     toggle.Text="OFF";paint()
-    if gfx then for _,e in ipairs(emitters) do e:Emit(18) end end
+    if gfx then for i,e in ipairs(emitters) do e:Emit(i==1 and 12 or 4) end end
 end
 local function toggleFlight() if flying then endFlight(true) else startFlight() end end
 connect(toggle.Activated,toggleFlight)
 connect(UIS.InputBegan,function(i,processed) if not processed and not UIS:GetFocusedTextBox() and i.KeyCode==Enum.KeyCode.F then toggleFlight() end end)
 connect(player.CharacterAdded,bind)
-connect(player.CharacterRemoving,function() generation=generation+1;resetCharacter() end)
+connect(player.CharacterRemoving,function(model)
+    if model~=bindingModel then return end
+    generation=generation+1;resetCharacter();status.Text="Waiting for respawn";toggle.Text="..."
+end)
 local uiClock=0
 connect(RunService.PreSimulation,function(dt)
     restoreFallVelocity()
@@ -370,6 +452,8 @@ connect(RunService.PreSimulation,function(dt)
     clock=clock+dt
     local now=os.clock()
     if flying then
+        if humanoid.Health<=0 or not velocityMover or not velocityMover.Parent
+            or not orientationMover or not orientationMover.Parent then endFlight(false);return end
         local camera=workspace.CurrentCamera
         if not camera then return end
         local look=camera.CFrame.LookVector
@@ -406,7 +490,9 @@ connect(RunService.PreSimulation,function(dt)
         local pitch=-f*math.rad(6)+vertical*math.rad(12)
         local roll=-lateral*math.rad(10)
         orientationMover.CFrame=CFrame.lookAt(Vector3.zero,planar)*CFrame.Angles(pitch,0,roll)
-        for _,e in ipairs(emitters) do e.Enabled=gfx;e.Rate=direction.Magnitude>0.1 and 24 or 8 end
+        for i,e in ipairs(emitters) do
+            e.Enabled=gfx;e.Rate=i==1 and (direction.Magnitude>0.1 and 18 or 6) or 6
+        end
         for _,t in ipairs(trails) do t.Enabled=gfx and smoothedVelocity.Magnitude>8 end
         updateWake(dt)
     elseif fallAt then
