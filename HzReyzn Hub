@@ -116,91 +116,224 @@ local surface = make("Frame", gui, {
 })
 
 
-local loadStarted=os.clock()
-local loading=make("Frame",gui,{
-    Name="Loading",Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(7,8,19),
-    BackgroundTransparency=1,BorderSizePixel=0,ZIndex=50,Active=false,
-})
-local loadCard=make("CanvasGroup",loading,{
-    AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),
-    Size=UDim2.fromOffset(460,270),BackgroundColor3=Color3.fromRGB(31,23,40),
-    BackgroundTransparency=0.08,GroupTransparency=1,BorderSizePixel=0,
-})
-round(loadCard,24)
-local loadScale=make("UIScale",loadCard,{Scale=1})
-local function fitLoading()
-    local bounds=surface.AbsoluteSize
-    loadScale.Scale=math.max(0.1,math.min(1,(bounds.X-32)/460,(bounds.Y-32)/270))
-end
-local loadResize=connect(surface:GetPropertyChangedSignal("AbsoluteSize"),fitLoading)
-fitLoading()
-local loadColors=ColorSequence.new({
-    ColorSequenceKeypoint.new(0,Color3.fromRGB(239,112,182)),
-    ColorSequenceKeypoint.new(0.5,Color3.fromRGB(156,124,255)),
-    ColorSequenceKeypoint.new(1,Color3.fromRGB(138,145,255)),
-})
-local loadEdge=make("UIStroke",loadCard,{Thickness=1.5,Color=Color3.new(1,1,1),Transparency=0.15})
-local loadEdgeGradient=make("UIGradient",loadEdge,{Color=loadColors,Rotation=25})
-for i=1,4 do
-    local halo=make("Frame",loadCard,{
-        Position=UDim2.fromOffset(-i*3,-i*3),Size=UDim2.new(1,i*6,1,i*6),
-        BackgroundTransparency=1,BorderSizePixel=0,
-    })
-    round(halo,24+i*3)
-    local edge=make("UIStroke",halo,{Thickness=3,Color=Color3.new(1,1,1),Transparency=0.86+i*0.025})
-    make("UIGradient",edge,{Color=loadColors,Rotation=25})
-end
-local emblem=make("Frame",loadCard,{
-    AnchorPoint=Vector2.new(0.5,0),Position=UDim2.new(0.5,0,0,27),Size=UDim2.fromOffset(66,66),
-    BackgroundColor3=Color3.fromRGB(44,29,72),BorderSizePixel=0,
-})
-round(emblem,19)
-local emblemEdge=make("UIStroke",emblem,{Thickness=2,Color=Color3.new(1,1,1)})
-make("UIGradient",emblemEdge,{Color=loadColors,Rotation=40})
-local loadingLogo=make("ImageLabel",emblem,{
-    Name="LoadingLogo",Position=UDim2.fromOffset(2,2),Size=UDim2.new(1,-4,1,-4),
-    BackgroundTransparency=1,BorderSizePixel=0,
-    Image="rbxassetid://132960411848659",ImageColor3=Color3.new(1,1,1),
-    ScaleType=Enum.ScaleType.Crop,Active=false,
-})
-round(loadingLogo,17)
-local loadTitle=label(loadCard,"HzReyzn Hub",UDim2.fromOffset(20,112),UDim2.fromOffset(420,38),29,white)
-loadTitle.TextXAlignment=Enum.TextXAlignment.Center;loadTitle.Font=Enum.Font.GothamBold
-local loadText=label(loadCard,"Loading",UDim2.fromOffset(30,169),UDim2.fromOffset(330,24),13,Color3.fromRGB(186,182,212))
-local loadPercent=label(loadCard,"0%",UDim2.fromOffset(370,169),UDim2.fromOffset(60,24),13,white)
-loadPercent.TextXAlignment=Enum.TextXAlignment.Right
-local loadTrack=make("Frame",loadCard,{
-    Position=UDim2.fromOffset(30,207),Size=UDim2.fromOffset(400,7),
-    BackgroundColor3=Color3.fromRGB(38,32,59),BorderSizePixel=0,
-})
-round(loadTrack,4)
-local loadFill=make("Frame",loadTrack,{
-    Size=UDim2.new(0,0,1,0),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0,
-})
-round(loadFill,4)
-make("UIStroke",loadFill,{Color=Color3.fromRGB(173,127,255),Thickness=4,Transparency=0.75})
-local fillGradient=make("UIGradient",loadFill,{Color=loadColors})
-local loadShimmer=make("Frame",loadFill,{
-    Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0,
-})
-round(loadShimmer,4)
-local shimmerGradient=make("UIGradient",loadShimmer,{
-    Offset=Vector2.new(-1,0),Transparency=NumberSequence.new({
-        NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.45,1),
-        NumberSequenceKeypoint.new(0.5,0.25),NumberSequenceKeypoint.new(0.55,1),
-        NumberSequenceKeypoint.new(1,1),
-    }),
-})
-local loadingConnection=connect(RunService.RenderStepped,function()
-    local elapsed=os.clock()-loadStarted
-    loadPercent.Text=string.format("%d%%",math.min(100,math.floor(elapsed/3.35*100)))
-    loadEdge.Transparency=0.15+0.85*loadCard.GroupTransparency
-    loadEdgeGradient.Rotation=25+elapsed*35
-    emblemEdge.Transparency=0.15+0.15*math.sin(elapsed*3)
-    shimmerGradient.Offset=Vector2.new((elapsed%1.3)/1.3*2-1,0)
-end)
-TweenService:Create(loadCard,TweenInfo.new(0.5),{GroupTransparency=0}):Play()
-TweenService:Create(loadFill,TweenInfo.new(3.35,Enum.EasingStyle.Linear),{Size=UDim2.fromScale(1,1)}):Play()
+-- Cinematic intro: drawn locally, with the supplied logos and reference audio.
+local intro=(function()
+    local started=os.clock()
+    local duration=16.5
+    local ready,leaving,skipRequested=false,false,false
+    local reveal
+    local red=Color3.fromRGB(230,13,41)
+    local silver=Color3.fromRGB(228,235,240)
+    local black=Color3.fromRGB(3,4,5)
+    local layer=make("Frame",gui,{Name="Loading",Size=UDim2.fromScale(1,1),
+        BackgroundColor3=black,BorderSizePixel=0,ZIndex=50,Active=true})
+    local stage=make("CanvasGroup",layer,{Name="IntroHUD",AnchorPoint=Vector2.new(.5,.5),
+        Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(800,640),
+        BackgroundTransparency=1,GroupTransparency=1})
+    local scaling=make("UIScale",stage,{Scale=1})
+    local function fit()
+        local size=surface.AbsoluteSize
+        scaling.Scale=math.max(.1,math.min(1.2,(size.X-32)/800,(size.Y-76)/640))
+    end
+    local resizeConnection=connect(surface:GetPropertyChangedSignal("AbsoluteSize"),fit)
+    fit()
+    local function frame(parent,x,y,w,h,color,alpha)
+        return make("Frame",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+            BackgroundColor3=color or silver,BackgroundTransparency=alpha or 0,BorderSizePixel=0})
+    end
+    local function group(parent)
+        return make("CanvasGroup",parent,{Size=UDim2.fromScale(1,1),BackgroundTransparency=1})
+    end
+    local function line(parent,x1,y1,x2,y2,width,color,alpha)
+        local dx,dy=x2-x1,y2-y1
+        local object=frame(parent,(x1+x2)*.5,(y1+y2)*.5,math.sqrt(dx*dx+dy*dy),width,color,alpha)
+        object.AnchorPoint=Vector2.new(.5,.5);object.Rotation=math.deg(math.atan2(dy,dx))
+        return object
+    end
+    local function text(parent,value,x,y,w,h,size,color)
+        local object=label(parent,value,UDim2.fromOffset(x,y),UDim2.fromOffset(w,h),size,color or silver)
+        object.TextXAlignment=Enum.TextXAlignment.Center;object.Font=Enum.Font.GothamBold
+        return object
+    end
+    local grid=group(stage)
+    for n=-14,14 do
+        local fade=.955+math.abs(n)/14*.035
+        line(grid,400+n*22,30,400+n*22,600,1,silver,fade)
+        line(grid,75,310+n*20,725,310+n*20,1,silver,fade)
+    end
+    for inset=0,1 do
+        local d=300-inset*30
+        line(grid,400,310-d,400+d,310,1,silver,.78+inset*.12)
+        line(grid,400+d,310,400,310+d,1,silver,.78+inset*.12)
+        line(grid,400,310+d,400-d,310,1,silver,.78+inset*.12)
+        line(grid,400-d,310,400,310-d,1,silver,.78+inset*.12)
+    end
+    local accents={}
+    local function accent(object) accents[#accents+1]=object;return object end
+    local function ring(radius,arcs,width,alpha)
+        local parent=make("Frame",stage,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(400,310),
+            Size=UDim2.fromOffset(480,480),BackgroundTransparency=1})
+        for _,span in ipairs(arcs) do
+            local count=math.ceil((span[2]-span[1])/5)
+            for j=0,count-1 do
+                local a=math.rad(span[1]+(span[2]-span[1])*j/count)
+                local b=math.rad(span[1]+(span[2]-span[1])*(j+1)/count)
+                accent(line(parent,240+math.cos(a)*radius,240+math.sin(a)*radius,
+                    240+math.cos(b)*radius,240+math.sin(b)*radius,width,silver,alpha))
+            end
+        end
+        return parent
+    end
+    local outer=ring(197,{{-75,28},{65,160},{205,250}},1.5,.15)
+    local middle=ring(174,{{0,125},{150,280},{302,330}},3,.5)
+    local inner=ring(149,{{0,360}},1,.56)
+    local ticks=make("Frame",stage,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(400,310),
+        Size=UDim2.fromOffset(440,440),BackgroundTransparency=1})
+    for n=0,95 do
+        if n%24<19 then
+            local a=math.rad(n*3.75)
+            local r=n%4==0 and 182 or 187
+            accent(line(ticks,220+math.cos(a)*r,220+math.sin(a)*r,
+                220+math.cos(a)*192,220+math.sin(a)*192,n%4==0 and 2 or 1,silver,.24))
+        end
+    end
+    for _,y in ipairs({38,554}) do
+        local sign=y<310 and 1 or -1
+        accent(line(stage,320,y+sign*35,370,y,2,silver,.6))
+        accent(line(stage,370,y,430,y,2,silver,.6))
+        accent(line(stage,430,y,480,y+sign*35,2,silver,.6))
+    end
+    local pointers=group(stage)
+    for _,v in ipairs({{400,108,0},{605,310,90},{400,513,180},{195,310,270}}) do
+        local arrow=text(pointers,"▽",v[1]-10,v[2]-12,20,24,22,silver)
+        arrow.Rotation=v[3]
+    end
+    local core=group(stage);core.GroupTransparency=1
+    local coreScale=make("UIScale",core,{Scale=1})
+    local logo=make("ImageLabel",core,{Name="PrimaryLogo",AnchorPoint=Vector2.new(.5,.5),
+        Position=UDim2.fromOffset(400,310),Size=UDim2.fromOffset(248,248),BackgroundTransparency=1,
+        Image="rbxassetid://115928147610604",ScaleType=Enum.ScaleType.Fit})
+    local smallLogo=make("ImageLabel",stage,{Name="RightLogo",AnchorPoint=Vector2.new(.5,.5),
+        Position=UDim2.fromOffset(681,310),Size=UDim2.fromOffset(44,44),BackgroundTransparency=1,
+        Image="rbxassetid://99559023639968",ScaleType=Enum.ScaleType.Fit,ImageTransparency=1})
+    local fallback=text(core,"Hz",325,263,150,94,70,silver)
+    fallback.Visible=not logo.IsLoaded
+    connect(logo:GetPropertyChangedSignal("IsLoaded"),function() fallback.Visible=not logo.IsLoaded end)
+    local charge=group(stage)
+    local chargePlate=frame(charge,182,265,436,90,black,.02)
+    -- Hexagonal end caps and double outline around the loading segments.
+    for _,pad in ipairs({0,5}) do
+        local c=pad==0 and silver or Color3.fromRGB(91,97,106)
+        local pts={{182-pad,265-pad},{618+pad,265-pad},{645+pad,310},{618+pad,355+pad},{182-pad,355+pad},{155-pad,310}}
+        for j=1,6 do local a,b=pts[j],pts[j%6+1];line(charge,a[1],a[2],b[1],b[2],1.5,c,.15) end
+    end
+    local segments={}
+    for n=1,21 do
+        local segment=frame(charge,179+n*19,276,11,68,silver,.93)
+        segment.Rotation=26;segments[n]=segment
+    end
+    local counterPlate=frame(charge,373,287,54,46,black,0)
+    counterPlate.Rotation=30
+    make("UIStroke",counterPlate,{Color=red,Thickness=1.5})
+    local percent=text(charge,"0",373,288,54,44,17,silver)
+    local banner=group(stage);banner.GroupTransparency=1
+    local bannerPlate=frame(banner,203,277,394,66,Color3.fromRGB(43,2,9),.08)
+    make("UIStroke",bannerPlate,{Color=red,Thickness=2})
+    for n=0,8 do
+        local stripe=frame(banner,313+n*19,254,9,16,red,.3);stripe.Rotation=28
+        local stripe2=frame(banner,313+n*19,350,9,16,red,.3);stripe2.Rotation=28
+    end
+    local title=text(banner,"HzReyzn Hub",211,281,378,56,38,red)
+    local subtitle=text(stage,"LOADING",310,572,180,27,17,red)
+    local subline=frame(stage,348,603,104,2,red,.1)
+    local skip=make("TextButton",layer,{Name="SkipIntro",Position=UDim2.fromOffset(24,52),
+        Size=UDim2.fromOffset(120,36),Text="SALTAR  »",Font=Enum.Font.GothamBold,TextSize=12,
+        TextColor3=silver,BackgroundColor3=Color3.fromRGB(18,19,22),BackgroundTransparency=.12,
+        BorderSizePixel=0,AutoButtonColor=true,ZIndex=2})
+    round(skip,7);make("UIStroke",skip,{Color=red,Thickness=1,Transparency=.25})
+    local sound
+    local renderConnection
+    local function finish()
+        if leaving or destroyed then return end
+        if not ready then skipRequested=true;return end
+        leaving=true;skip.Active=false
+        if renderConnection then renderConnection:Disconnect() end
+        resizeConnection:Disconnect()
+        if sound then TweenService:Create(sound,TweenInfo.new(.3),{Volume=0}):Play() end
+        TweenService:Create(stage,TweenInfo.new(.45,Enum.EasingStyle.Quart,Enum.EasingDirection.In),
+            {GroupTransparency=1,Position=UDim2.new(.5,0,.5,32)}):Play()
+        TweenService:Create(layer,TweenInfo.new(.45),{BackgroundTransparency=1}):Play()
+        TweenService:Create(skip,TweenInfo.new(.2),{TextTransparency=1,BackgroundTransparency=1}):Play()
+        task.delay(.45,function()
+            if sound then sound:Stop() end
+            if destroyed then return end
+            layer:Destroy()
+            if reveal then reveal() end
+        end)
+    end
+    connect(skip.Activated,finish)
+    task.spawn(function()
+        -- These are fixed local audio assets, never executable downloaded code.
+        local getAsset=getcustomasset or getsynasset
+        if type(getAsset)~="function" or type(writefile)~="function" then return end
+        local ok,err=pcall(function()
+            local path="HzReyzn_Intro_20260923.ogg"
+            if type(isfile)~="function" or not isfile(path) then
+                local data=game:HttpGet("https://raw.githubusercontent.com/hzReyzn/scriptshz/main/assets/HzReyzn-Intro.ogg")
+                if destroyed or leaving then return end
+                if data:sub(1,4)~="OggS" then return end
+                writefile(path,data)
+            end
+            if destroyed or leaving then return end
+            sound=make("Sound",layer,{Name="IntroAudio",SoundId=getAsset(path),Volume=.55,Looped=false})
+            local deadline=os.clock()+4
+            while not sound.IsLoaded and not destroyed and not leaving and os.clock()<deadline do task.wait(.05) end
+            if destroyed or leaving or not sound.IsLoaded then return end
+            sound.TimePosition=math.min(os.clock()-started,math.max(0,sound.TimeLength-.05))
+            sound:Play()
+        end)
+        if not ok then warn("[HzReyzn Intro] Local audio unavailable: "..tostring(err)) end
+    end)
+    task.spawn(function()
+        pcall(function() game:GetService("ContentProvider"):PreloadAsync({logo,smallLogo}) end)
+    end)
+    local lastPhase,lastSegment=nil,-1
+    renderConnection=connect(RunService.RenderStepped,function()
+        if destroyed or leaving then return end
+        local t=os.clock()-started
+        local redBlend=math.clamp((t-7.8)/2,0,1)
+        local phase=t<4.1 and 1 or (t<9.3 and 2 or (t<11.4 and 3 or 4))
+        if phase~=lastPhase then
+            lastPhase=phase
+            TweenService:Create(charge,TweenInfo.new(.3),{GroupTransparency=phase==1 and 0 or 1}):Play()
+            TweenService:Create(core,TweenInfo.new(.45),{GroupTransparency=(phase==2 or phase==4) and 0 or 1}):Play()
+            TweenService:Create(banner,TweenInfo.new(.35),{GroupTransparency=phase>=3 and 0 or 1}):Play()
+            if phase==4 then
+                TweenService:Create(bannerPlate,TweenInfo.new(.4),{BackgroundTransparency=.7}):Play()
+                TweenService:Create(banner,TweenInfo.new(.45,Enum.EasingStyle.Quart),{Position=UDim2.fromOffset(0,168)}):Play()
+            end
+        end
+        local progress=math.clamp((t-.6)/3.2,0,1)
+        local lit=math.floor(progress*#segments)
+        if lit~=lastSegment then
+            lastSegment=lit;percent.Text=tostring(math.floor(progress*100))
+            for j,segment in ipairs(segments) do segment.BackgroundTransparency=j<=lit and .08 or .93 end
+        end
+        outer.Rotation=t*13;middle.Rotation=-t*21;ticks.Rotation=t*6
+        smallLogo.ImageTransparency=1-math.clamp((t-6)/1.2,0,1)
+        local tint=silver:Lerp(red,redBlend)
+        -- Recolor once during transition; animation moves containers, not individual lines.
+        if t>=7.8 and t<=10 then for _,object in ipairs(accents) do object.BackgroundColor3=tint end end
+        coreScale.Scale=1 -- The logo stays upright; only the surrounding rings rotate.
+        subtitle.TextTransparency=.12+.16*(1+math.sin(t*3))*.5
+        if t>=duration then finish() end
+    end)
+    TweenService:Create(stage,TweenInfo.new(.7,Enum.EasingStyle.Sine),{GroupTransparency=0}):Play()
+    return {Reveal=function(callback)
+        reveal=callback;ready=true
+        if skipRequested or os.clock()-started>=duration then finish() end
+    end}
+end)()
 
 local window = make("CanvasGroup", surface, {
     Name = "Window",
@@ -2182,26 +2315,14 @@ do
         dismiss.BackgroundColor3=panelColor;dismiss.TextColor3=accentColor
     end
     refreshExtras()
-    task.spawn(function()
-        -- Four seconds total, including the final fade.
-        local remaining=3.35-(os.clock()-loadStarted)
-        if remaining>0 then task.wait(remaining) end
-        if destroyed then return end
-        TweenService:Create(loadCard,TweenInfo.new(0.65,Enum.EasingStyle.Sine),
-            {GroupTransparency=1}):Play()
-        task.wait(0.65)
-        if destroyed then return end
-        loadingConnection:Disconnect()
-        loadResize:Disconnect()
-        loading:Destroy()
+    intro.Reveal(function()
         window.Visible=true
         toastScale.Scale=math.min(1,math.max(0.1,(surface.AbsoluteSize.X-24)/320))
         toast.Visible=true
         TweenService:Create(toast,TweenInfo.new(0.6,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),
             {Position=UDim2.new(1,-12,1,-8),GroupTransparency=0}):Play()
         TweenService:Create(timer,TweenInfo.new(5,Enum.EasingStyle.Linear),{Size=UDim2.fromScale(0,1)}):Play()
-        task.wait(4.2)
-        dismissToast()
+        task.delay(4.2,dismissToast)
     end)
 end
 
