@@ -60,60 +60,94 @@ local function tween(o,props,time)
     local t=TweenService:Create(o,TweenInfo.new(time or 0.18,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),props)
     t:Play();return t
 end
--- Shared NoFallDamage: one sampler for Hub + Fly, regardless of activation order.
+-- Shared NoFallDamage: user's Heartbeat -> RenderStepped method, with ON/OFF cleanup.
 local function acquireNoFall(owner)
-    local service=playerGui:FindFirstChild("HzReyzn_NoFallDamage_v2")
+    local pid=game.PlaceId
+    if pid~=189707 then
+        print("Error not found natural disasters survival game!")
+        return
+    end
+    local service=playerGui:FindFirstChild("HzReyzn_NoFallDamage_v3")
     if not service then
         service=Instance.new("Folder")
-        service.Name="HzReyzn_NoFallDamage_v2"
+        service.Name="HzReyzn_NoFallDamage_v3"
+        local rs=game:GetService("RunService")
+        local hb,rsd=rs.Heartbeat,rs.RenderStepped
+        local lp=game:GetService("Players").LocalPlayer
+        local z=Vector3.zero
         local pending,closed=nil,false
+        local heartbeatConnection,boundCharacter
+        local generation=0
         local links={}
-        local function eligible(model,h,r)
-            return model==player.Character and model.Parent and h.Parent==model and r.Parent==model
-                and h.Health>0 and not r.Anchored and not h.SeatPart and not h.Sit
-                and not h.PlatformStand and not h.Jump and h.FloorMaterial==Enum.Material.Air
-                and h:GetState()==Enum.HumanoidStateType.Freefall
-                and not r:FindFirstChild("HZFlightVelocity")
+        local function restore(sample)
+            if not sample or pending~=sample then return end
+            pending=nil
+            if sample.root.Parent then sample.root.AssemblyLinearVelocity=sample.velocity end
         end
-        local function restore()
-            local sample=pending;pending=nil
-            if not sample or not eligible(sample.model,sample.hum,sample.root) then return end
-            local current=sample.root.AssemblyLinearVelocity
-            -- A jump, impulse or another controller owns any newly changed Y velocity.
-            -- Never replay an old horizontal velocity over player input or earthquake control.
-            if math.abs(current.Y)>0.001 then return end
-            sample.root.AssemblyLinearVelocity=Vector3.new(current.X,sample.y,current.Z)
+        local function unbind()
+            if heartbeatConnection then heartbeatConnection:Disconnect();heartbeatConnection=nil end
+            restore(pending)
+        end
+        local function hasOwners()
+            for _,child in ipairs(service:GetChildren()) do
+                if child:IsA("ObjectValue") and child.Value and child.Value.Parent then return true end
+            end
+            return false
         end
         local function stop()
             if closed then return end
-            closed=true;restore()
+            closed=true;generation=generation+1;unbind()
             for _,c in ipairs(links) do c:Disconnect() end
             table.clear(links)
         end
         local function listen(signal,callback)
             links[#links+1]=signal:Connect(callback)
         end
+        local function f(c)
+            generation=generation+1
+            local token=generation
+            unbind();boundCharacter=c
+            if not c then return end
+            task.spawn(function()
+                local r=c:WaitForChild("HumanoidRootPart",10)
+                if closed or token~=generation or c~=lp.Character or not r or not r.Parent then return end
+                local con
+                con=hb:Connect(function()
+                    if closed or token~=generation or c~=lp.Character or not r.Parent then
+                        con:Disconnect()
+                        if heartbeatConnection==con then heartbeatConnection=nil end
+                        if pending and pending.root==r then restore(pending) end
+                        return
+                    end
+                    if not hasOwners() then service:Destroy();return end
+                    -- One in-flight sample prevents overlapping Heartbeats from saving zero.
+                    if pending then return end
+                    local v=r.AssemblyLinearVelocity
+                    local sample={root=r,velocity=v}
+                    pending=sample
+                    r.AssemblyLinearVelocity=z
+                    rsd:Wait()
+                    restore(sample)
+                end)
+                heartbeatConnection=con
+            end)
+        end
         listen(service.Destroying,stop)
-        -- Restore before animations/physics even when rendering is throttled.
-        listen(RunService.PreAnimation,restore)
-        listen(RunService.PreSimulation,restore)
-        listen(RunService.RenderStepped,restore)
-        listen(player.CharacterRemoving,function(model)
-            if pending and pending.model==model then pending=nil end
+        listen(service.ChildRemoved,function()
+            if not closed and service.Parent and not hasOwners() then service:Destroy() end
         end)
-        listen(RunService.Heartbeat,function()
-            if closed then return end
-            restore()
-            local model=player.Character
-            local h=model and model:FindFirstChildOfClass("Humanoid")
-            local r=model and model:FindFirstChild("HumanoidRootPart")
-            if not h or not r or not eligible(model,h,r) then return end
-            local velocity=r.AssemblyLinearVelocity
-            if velocity.Y>=-1 then return end
-            pending={model=model,hum=h,root=r,y=velocity.Y}
-            r.AssemblyLinearVelocity=Vector3.new(velocity.X,0,velocity.Z)
-        end)
+        listen(lp.CharacterAdded,f)
+        listen(lp.CharacterRemoving,function(c) if c==boundCharacter then f(nil) end end)
         service.Parent=playerGui
+        -- Upgrade an already running Hub/Fly without leaving the previous sampler alive.
+        local previous=playerGui:FindFirstChild("HzReyzn_NoFallDamage_v2")
+        if previous then
+            for _,lease in ipairs(previous:GetChildren()) do
+                if lease:IsA("ObjectValue") and lease.Value and lease.Value.Parent then lease.Parent=service end
+            end
+            previous:Destroy()
+        end
+        f(lp.Character)
     end
     local lease=Instance.new("ObjectValue")
     lease.Name=owner.Name;lease.Value=owner;lease.Parent=service
@@ -568,7 +602,7 @@ connect(RunService.PreSimulation,function(dt)
 end)
 connect(gui.Destroying,function()
     if dead then return end
-    dead=true;releaseNoFall();generation=generation+1;resetCharacter()
+    dead=true;if releaseNoFall then releaseNoFall() end;generation=generation+1;resetCharacter()
     for _,c in ipairs(connections) do c:Disconnect() end
 end)
 connect(close.Activated,function() gui:Destroy() end)
