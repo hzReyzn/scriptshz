@@ -14,8 +14,11 @@
     Environments with getcustomasset/writefile: no IDs are needed.
     Standard Roblox Studio: upload the PNG/video and set LogoAssetId,
     VideoAssetId and optionally PosterAssetId. Put this in a LocalScript.
-    VideoFrame codec support depends on the client. WebM is tried first,
-    MP4 second; if neither plays, the poster and animated effects stay visible.
+    Cold-cache fix: visible render probes warm up the PNG and VideoFrame.
+    Neither asset waits for IsLoaded while completely hidden.
+    The main background preserves the source's 60 FPS (VP9 / H.264).
+    VP8 at 30 FPS is a lighter compatibility fallback.
+    If the client cannot decode any video, the poster/effects stay visible.
     Loading measures this intro's assets and minimum time, not the whole game.
 
     All instances, events, tasks and video playback are cleaned up on dismissal.
@@ -32,7 +35,8 @@ local CONFIG = {
     VideoAssetId = "",
     PosterAssetId = "",
     Quality = "Auto", -- "Auto", "High", "Low"
-    AssetTimeout = 18,
+    AssetTimeout = 30,
+    VideoStartTimeout = 7,
     VideoVolume = 0,
     OnComplete = function()
         -- Open your main hub here, after the user dismisses the loading screen.
@@ -41,10 +45,11 @@ local CONFIG = {
 
 local ROOT = "https://raw.githubusercontent.com/hzReyzn/scriptshz/refs/heads/main/assets/loading/"
 local ASSETS = {
-    logo = {file = "hzreyzn-logo-v2.png", cache = "HzReyzn_Logo_v2.png", kind = "png"},
-    poster = {file = "hzreyzn-background-poster-v2.jpg", cache = "HzReyzn_Poster_v2.jpg", kind = "jpg"},
-    webm = {file = "hzreyzn-background-v2.webm", cache = "HzReyzn_Background_v2.webm", kind = "webm"},
-    mp4 = {file = "hzreyzn-background-v2.mp4", cache = "HzReyzn_Background_v2.mp4", kind = "mp4"},
+    logo = {file = "hzreyzn-logo-v3.png", cache = "HzReyzn_Logo_v3.png", kind = "png", bytes = 1730191},
+    poster = {file = "hzreyzn-background-poster-v3.jpg", cache = "HzReyzn_Poster_v3.jpg", kind = "jpg", bytes = 132818},
+    vp9 = {file = "hzreyzn-background-v3-vp9.webm", cache = "HzReyzn_Background_v3_vp9.webm", kind = "webm", bytes = 7950998},
+    vp8 = {file = "hzreyzn-background-v3-vp8.webm", cache = "HzReyzn_Background_v3_vp8.webm", kind = "webm", bytes = 4557281},
+    mp4 = {file = "hzreyzn-background-v3.mp4", cache = "HzReyzn_Background_v3.mp4", kind = "mp4", bytes = 9417624},
 }
 
 local Players = game:GetService("Players")
@@ -124,7 +129,7 @@ local function play()
         alive = true, completed = false, fades = {}, connections = {}, tasks = {},
         started = os.clock(), logoDone = false, videoDone = false,
         clicked = false, completionAt = nil, dismissAt = nil,
-        mediaAt = nil, logoAt = nil, video = nil, view = Vector2.new(1280, 720),
+        mediaAt = nil, logoAt = nil, videoAt = nil, video = nil, view = Vector2.new(1280, 720),
     }
     local gui = new("ScreenGui", {
         Name = GUI_NAME, IgnoreGuiInset = true, ResetOnSpawn = false,
@@ -218,15 +223,18 @@ local function play()
     local function localAsset(asset)
         local getAsset = getcustomasset or getsynasset
         if type(getAsset) ~= "function" or type(writefile) ~= "function" then return nil end
+        local function valid(bytes)
+            return validBytes(bytes, asset.kind) and (not asset.bytes or #bytes == asset.bytes)
+        end
         if type(isfile) == "function" then
             local ok, exists = pcall(isfile, asset.cache)
             if ok and exists then
-                local valid = true
+                local cacheValid = false
                 if type(readfile) == "function" then
                     local readOK, bytes = pcall(readfile, asset.cache)
-                    valid = readOK and validBytes(bytes, asset.kind)
+                    cacheValid = readOK and valid(bytes)
                 end
-                if valid then
+                if cacheValid then
                     local assetOK, uri = pcall(getAsset, asset.cache)
                     if assetOK and type(uri) == "string" and uri ~= "" then return uri end
                 end
@@ -234,7 +242,10 @@ local function play()
         end
         local ok, bytes = pcall(function() return game:HttpGet(ROOT .. asset.file) end)
         if not S.alive then return nil end
-        if not ok or not validBytes(bytes, asset.kind) then return nil end
+        if not ok or not valid(bytes) then
+            warn("HzReyzn: incomplete or failed download: " .. asset.file)
+            return nil
+        end
         local written, uri = pcall(function()
             writefile(asset.cache, bytes)
             return getAsset(asset.cache)
@@ -250,6 +261,20 @@ local function play()
             task.wait()
         end
         return false
+    end
+
+    local function warmImage(uri, timeout)
+        -- A transparent/hidden label may never enter Roblox's render queue.
+        -- This tiny on-screen probe is outside the fading CanvasGroup.
+        local probe = new("ImageLabel", {
+            Name = "ImageWarmup", Image = uri, ImageTransparency = 0,
+            BackgroundTransparency = 1, BorderSizePixel = 0,
+            Position = UDim2.fromOffset(2, 2), Size = UDim2.fromOffset(2, 2),
+            Visible = true, ZIndex = 100,
+        }, gui)
+        local ok, loaded = pcall(waitLoaded, probe, timeout)
+        if probe.Parent then probe:Destroy() end
+        return ok and loaded and S.alive
     end
 
     local ok, why = xpcall(function()
@@ -268,13 +293,14 @@ local function play()
         gradient(media, ColorSequence.new(WHITE), numbers({{0, 0.16}, {0.15, 0}, {0.62, 0}, {0.84, 0.47}, {1, 1}}))
         local poster = new("ImageLabel", {
             Name = "VideoPoster", BackgroundTransparency = 1, ImageTransparency = 0,
-            Size = UDim2.fromScale(1, 1), ScaleType = Enum.ScaleType.Stretch, ZIndex = 1,
+            Size = UDim2.fromScale(1, 1), ScaleType = Enum.ScaleType.Stretch, ZIndex = 3,
         }, media)
         local video = new("VideoFrame", {
             Name = "LoopingBackground", BackgroundTransparency = 1, BorderSizePixel = 0,
-            Size = UDim2.fromScale(1, 1), Looped = true, Playing = false,
-            Volume = math.clamp(CONFIG.VideoVolume, 0, 1), Visible = false, ZIndex = 2,
-        }, media)
+            Position = UDim2.fromOffset(2, 2), Size = UDim2.fromOffset(2, 2),
+            Looped = true, Playing = false,
+            Volume = math.clamp(CONFIG.VideoVolume, 0, 1), Visible = true, ZIndex = 100,
+        }, gui)
         S.video = video
 
         local atmosphere = frame(root, "Atmosphere", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C.black, 0, 2)
@@ -475,6 +501,9 @@ local function play()
             }
             root.Position = UDim2.fromOffset(0, out * math.min(CONFIG.SlidePixels, S.view.Y * 0.13))
             media.GroupTransparency = 1 - alpha * (S.mediaAt and smooth((now - S.mediaAt) / 0.5) or 0)
+            -- Keep the poster on top until actual playback advances, then
+            -- crossfade it away instead of flashing an empty/black video.
+            poster.ImageTransparency = S.videoAt and smooth((now - S.videoAt) / 0.45) or 0
             fallbackAlpha.multiplier = 1 - logoAlpha
             fallback.Visible = logoAlpha < 0.999
             local floatScale = math.clamp(layoutData.logoW / 600, 0.45, 1.4)
@@ -539,7 +568,7 @@ local function play()
                 local uri = assetId(CONFIG.LogoAssetId) or localAsset(ASSETS.logo)
                 if not uri or not S.alive then return end
                 logo.Image = uri
-                if waitLoaded(logo, 6) and S.alive then S.logoAt = os.clock() end
+                if warmImage(uri, 10) then S.logoAt = os.clock() end
             end)
             if S.alive then
                 S.logoDone = true
@@ -550,7 +579,7 @@ local function play()
             local uri = assetId(CONFIG.PosterAssetId) or localAsset(ASSETS.poster)
             if not uri or not S.alive then return end
             poster.Image = uri
-            if waitLoaded(poster, 5) and S.alive then S.mediaAt = S.mediaAt or os.clock() end
+            if warmImage(uri, 8) then S.mediaAt = S.mediaAt or os.clock() end
         end)
         spawnTask(function()
             local loaded = false
@@ -559,15 +588,34 @@ local function play()
                 -- Some clients throw for an unsupported URI instead of timing
                 -- out. Isolate each format so MP4 is still tried after WebM.
                 local accepted, result = pcall(function()
-                    video.Visible, video.Playing, video.Video = false, false, uri
-                    if not waitLoaded(video, 3.5) or not S.alive then return false end
+                    -- Decode visibly on-screen before putting the video in
+                    -- the fading group. Visible=false caused a cold-start
+                    -- deadlock on clients that defer invisible media loads.
+                    video.Parent = gui
+                    video.Position, video.Size = UDim2.fromOffset(2, 2), UDim2.fromOffset(2, 2)
+                    video.Visible, video.ZIndex = true, 100
+                    video.Playing, video.Video = false, ""
+                    video.Video = uri
                     video.Looped = true
                     video:Play()
-                    -- Keep the poster until the video decoder produces a frame.
-                    local untilTime = os.clock() + 1
-                    while S.alive and video.TimePosition <= 0 and os.clock() < untilTime do task.wait() end
-                    if not S.alive or video.TimePosition <= 0 then return false end
-                    video.Visible = true
+                    local untilTime = os.clock() + CONFIG.VideoStartTimeout
+                    local previous, moving, restarted = video.TimePosition, 0, false
+                    while S.alive and os.clock() < untilTime do
+                        task.wait()
+                        if not S.alive then return false end
+                        if video.IsLoaded and not restarted then
+                            video:Play()
+                            restarted = true
+                        end
+                        local position = video.TimePosition
+                        if position > previous then moving = moving + 1 end
+                        previous = position
+                        if moving >= 2 then break end
+                    end
+                    if not S.alive or moving < 2 then return false end
+                    video.Position, video.Size = UDim2.fromScale(0, 0), UDim2.fromScale(1, 1)
+                    video.ZIndex, video.Parent = 2, media
+                    S.videoAt = os.clock()
                     S.mediaAt = S.mediaAt or os.clock()
                     return true
                 end)
@@ -576,7 +624,8 @@ local function play()
             local success = pcall(function()
                 local id = assetId(CONFIG.VideoAssetId)
                 if id then loaded = tryVideo(id) end
-                if not loaded and S.alive then loaded = tryVideo(localAsset(ASSETS.webm)) end
+                if not loaded and S.alive then loaded = tryVideo(localAsset(ASSETS.vp9)) end
+                if not loaded and S.alive then loaded = tryVideo(localAsset(ASSETS.vp8)) end
                 if not loaded and S.alive then loaded = tryVideo(localAsset(ASSETS.mp4)) end
             end)
             if S.alive then
