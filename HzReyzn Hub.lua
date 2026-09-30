@@ -1,5 +1,5 @@
 -- HzReyzn Hub
--- Native UI rendering, Crimson LED accents and smooth state transitions.
+-- Creado x Lord SIX seven Rey del Gore carlitos omg
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
