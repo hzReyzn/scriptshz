@@ -1242,7 +1242,7 @@ end
 scriptButton(
     mainScroll,
     "HzReyzn Shaders - The BEST Shaders",
-    "https://raw.githubusercontent.com/hzReyzn/scriptshz/refs/heads/main/HzReyzn%20Shaders",
+    "https://raw.githubusercontent.com/hzReyzn/crazy/main/HzReyzn_Shaders.lua",
     2
 )
 
