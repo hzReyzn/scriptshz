@@ -1241,8 +1241,8 @@ end
 
 scriptButton(
     mainScroll,
-    "HzReyzn Shaders - The BEST Shaders",
-    "https://raw.githubusercontent.com/hzReyzn/crazy/main/HzReyzn_Shaders.lua",
+    "S&NC Shaders",
+    "https://raw.githubusercontent.com/hzReyzn/crazy/main/SNC_Shaders.lua",
     2
 )
 
