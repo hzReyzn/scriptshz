@@ -52,6 +52,7 @@ local dark = Color3.fromRGB(10, 11, 15)
 local accentColor = pink
 local selectedBackground = Color3.fromRGB(57, 19, 27)
 local theme = "Halloween"
+local animatedColors = true
 local themeMarks = {}
 local themeButtons = {}
 local controlSkins = {}
@@ -226,7 +227,64 @@ local surface = make("Frame", gui, {
 })
 
 
--- Only the Halloween intro runs. Its screen and sound are owned by this Hub instance.
+-- Shared source embedded in Hub and the standalone intro; no extra module download.
+local function createHalloweenMedia(isAlive)
+    local base = "https://raw.githubusercontent.com/hzReyzn/scriptshz/main/assets/halloween/"
+    local specs = {
+        background = {file="cemetery-background-v1.jpg", bytes=267109, signature="\255\216\255"},
+        logo = {file="hz-logo-v1.jpg", bytes=514147, signature="\255\216\255"},
+        video = {file="intro-v1.webm", bytes=4176555, signature="\26\69\223\163"},
+        videoFallback = {file="intro-v1.mp4", bytes=7042195, signature="ftyp", offset=5},
+    }
+    local resolved = {}
+    local function valid(bytes, spec)
+        local start = spec.offset or 1
+        return type(bytes)=="string" and #bytes==spec.bytes
+            and bytes:sub(start,start+#spec.signature-1)==spec.signature
+    end
+    return function(key)
+        if not isAlive() then return "" end
+        if resolved[key] then return resolved[key] end
+        local spec = specs[key]
+        local register = getcustomasset or getsynasset
+        if not spec or type(register)~="function" or type(writefile)~="function" then return "" end
+        local path = "HzReyzn_"..spec.file
+        local exists = false
+        if type(isfile)=="function" then
+            local ok, found = pcall(isfile,path)
+            exists = ok and found==true
+        end
+        if exists and type(readfile)=="function" then
+            local ok, bytes = pcall(readfile,path)
+            exists = ok and valid(bytes,spec)
+        end
+        if not exists then
+            -- Bound the wait; a late HTTP response cannot write after cancellation.
+            local pending, body, failed = true, nil, false
+            task.spawn(function()
+                local ok, data = pcall(function() return game:HttpGet(base..spec.file) end)
+                if not pending or not isAlive() then return end
+                if ok and valid(data,spec) then body=data else failed=true end
+                pending=false
+            end)
+            local deadline=os.clock()+18
+            while pending and isAlive() and os.clock()<deadline do task.wait(.05) end
+            pending=false
+            if failed or not body or not isAlive() then return "" end
+            local ok=pcall(writefile,path,body)
+            if not ok then return "" end
+        end
+        if not isAlive() then return "" end
+        local ok, uri=pcall(register,path)
+        if ok and type(uri)=="string" and uri~="" then resolved[key]=uri;return uri end
+        return ""
+    end
+end
+
+local media={logo="",background=""}
+media.resolve=createHalloweenMedia(function() return not destroyed and gui.Parent~=nil end)
+
+-- The video intro owns its original soundtrack and exits automatically.
 local intro = {}
 function intro.Reveal(callback)
     local fetching = true
@@ -257,7 +315,7 @@ function intro.Reveal(callback)
     end)
 end
 
--- Resolution-independent HZ marks. All instances share the selected theme.
+-- The supplied Halloween logo is reused in the header, launcher, preview and toast.
 local function themeLogo(host)
     host.ImageTransparency = 1
     local plate = make("Frame",host,{Name="ThemeLogo",Size=UDim2.fromScale(1,1),
@@ -277,7 +335,17 @@ local function themeLogo(host)
     local mark=label(plate,"HZ",UDim2.fromScale(.09,.12),UDim2.fromScale(.82,.78),24,white)
     mark.TextScaled=true;mark.Font=Enum.Font.GrenzeGotisch;mark.TextXAlignment=Enum.TextXAlignment.Center
     local ink=make("UIGradient",mark,{Rotation=90})
-    themeMarks[#themeMarks+1]={plate=plate,edge=gradient,mark=mark,ink=ink,pumpkin=pumpkin,lobes=lobes,stem=stem}
+    local art=make("ImageLabel",host,{Name="HalloweenLogo",Size=UDim2.fromScale(1,1),
+        BackgroundTransparency=1,Image=media.logo,ScaleType=Enum.ScaleType.Fit,Visible=false,ZIndex=2})
+    round(art,12)
+    local entry={plate=plate,edge=gradient,mark=mark,ink=ink,pumpkin=pumpkin,lobes=lobes,stem=stem,art=art}
+    function entry:Update()
+        local ready=theme=="Halloween" and self.art.Image~="" and self.art.IsLoaded
+        self.art.Visible=ready;self.plate.Visible=not ready
+    end
+    connect(art:GetPropertyChangedSignal("IsLoaded"),function() entry:Update() end)
+    themeMarks[#themeMarks+1]=entry
+    entry:Update()
 end
 
 -- Keep text and controls native: the persistent window is not a canvas texture.
@@ -400,6 +468,7 @@ local function styleControl(target, mode, caption, compact)
         local flash=now<self.PulseUntil and math.sin(math.clamp((now-self.Started)/.5,0,1)*math.pi) or 0
         local blend=math.max(motion.Value,self.Busy and .7 or 0,flash)
         local lit=self.Active or blend>.001 or now<self.PulseUntil
+        target.BackgroundTransparency=compact and 1 or (theme=="Halloween" and .2 or 0)
         local a,b,c=controlPalette()
         local black=Color3.new(0,0,0)
         local trackBlend=knob and motion.Value or .65+blend*.35
@@ -476,6 +545,10 @@ local function styleControl(target, mode, caption, compact)
     end
     function skin:Step(now)
         if self.Active or self.Busy or motion.Value>.001 or now<self.PulseUntil or fx.Visible then self:Refresh() end
+        if animatedColors then
+            trackGradient.Offset=Vector2.new(math.sin(now*.65)*.16,0)
+            ledGradient.Offset=Vector2.new(math.sin(now*.8)*.25,0)
+        end
     end
     connect(motion.Changed,function() skin:Refresh() end)
     connect(target.MouseEnter,function() skin.Hovered=true;skin:Refresh() end)
@@ -502,7 +575,34 @@ do
     end)
 end
 
-local design={leds={},inward={}}
+local design={leds={},inward={},embers={},clock=0}
+do
+    local backdrop=make("Frame",window,{Name="HalloweenBackdrop",Size=UDim2.fromScale(1,1),
+        BackgroundTransparency=1,ClipsDescendants=true,ZIndex=0})
+    round(backdrop,16)
+    design.backdrop=backdrop
+    design.art=make("ImageLabel",backdrop,{Name="CemeteryArtwork",Position=UDim2.fromOffset(-12,-8),
+        Size=UDim2.new(1,24,1,16),Image="",BackgroundTransparency=1,ImageTransparency=.14,
+        ScaleType=Enum.ScaleType.Crop,ZIndex=0})
+    local veil=make("Frame",backdrop,{Name="ReadabilityVeil",Size=UDim2.fromScale(1,1),
+        BackgroundColor3=Color3.fromRGB(10,7,5),BackgroundTransparency=.25,BorderSizePixel=0,ZIndex=1})
+    make("UIGradient",veil,{Rotation=90,Transparency=NumberSequence.new({
+        NumberSequenceKeypoint.new(0,.15),NumberSequenceKeypoint.new(.32,.5),
+        NumberSequenceKeypoint.new(.7,.55),NumberSequenceKeypoint.new(1,.25)})})
+    local sweep=make("Frame",backdrop,{Name="AmberReflection",Position=UDim2.fromScale(-.5,0),
+        Size=UDim2.fromScale(.6,1),BackgroundColor3=Color3.fromRGB(255,155,62),
+        BackgroundTransparency=.94,BorderSizePixel=0,ZIndex=2})
+    make("UIGradient",sweep,{Rotation=18,Transparency=NumberSequence.new({
+        NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(.5,0),NumberSequenceKeypoint.new(1,1)})})
+    design.sweep=sweep
+    for i=1,12 do
+        local dot=make("Frame",backdrop,{Name="Ember"..i,Size=UDim2.fromOffset(i%3==0 and 3 or 2,i%3==0 and 3 or 2),
+            BackgroundColor3=Color3.fromRGB(255,171+i*4,80),BackgroundTransparency=.7,
+            BorderSizePixel=0,ZIndex=3})
+        round(dot,3)
+        design.embers[i]={dot=dot,x=((i*61)%720)+20,phase=i*.618,speed=9+(i%4)*3}
+    end
+end
 do
     local inset=make("Frame",window,{Position=UDim2.fromOffset(6,6),Size=UDim2.new(1,-12,1,-12),
         BackgroundTransparency=1,BorderSizePixel=0,ZIndex=0})
@@ -558,6 +658,7 @@ local logo=make("ImageLabel",header,{
 themeLogo(logo)
 local hubTitle=label(header,"HzReyzn Hub",UDim2.fromOffset(78,19),UDim2.fromOffset(360,27),21,white)
 hubTitle.Font=Enum.Font.GothamBold
+design.titleInk=make("UIGradient",hubTitle,{Name="TitleReflection",Rotation=15})
 design.divider=make("Frame",header,{Position=UDim2.fromOffset(20,63),Size=UDim2.new(1,-40,0,1),BackgroundColor3=muted,BackgroundTransparency=.5,BorderSizePixel=0})
 
 local minimize = button(
@@ -715,10 +816,10 @@ local refreshChangelog
 do
     -- Use "+" for additions and "-" for removals in future entries.
     local entries={
-        {"+","Halloween intro + default theme"},
-        {"+","Neon minimize and close effects"},
-        {"+","Flight respawn + shared fall protection"},
-        {"+","Movement compatibility + cleanup"},
+        {"+","Video intro + original soundtrack"},
+        {"+","Custom Halloween background + HZ logo"},
+        {"+","Flowing lights, embers and reflections"},
+        {"+","Smoother window and page transitions"},
     }
     local changes=make("Frame",changelogScroll,{Name="ChangelogEntries",LayoutOrder=1,
         Size=UDim2.new(1,0,0,108),BackgroundColor3=panelColor,BorderSizePixel=0})
@@ -744,6 +845,8 @@ do
     message.LineHeight=1.25
     refreshChangelog=function()
         changes.BackgroundColor3=panelColor;note.BackgroundColor3=panelColor
+        changes.BackgroundTransparency=theme=="Halloween" and .2 or 0
+        note.BackgroundTransparency=theme=="Halloween" and .2 or 0
         message.TextColor3=muted;noteLine.BackgroundColor3=accentColor
         for _,entry in ipairs(markers) do
             entry.badge.BackgroundColor3=selectedBackground
@@ -752,7 +855,6 @@ do
     end
 end
 
-local animatedColors = true
 local refreshSettings=function() end
 local closeThemes=function() end
 local colorButton
@@ -770,7 +872,7 @@ do
     local themeCard,themeHint=settingCard(0,"Theme","Choose your interface colors.")
     local picker=button(themeCard,"Halloween   +",UDim2.fromOffset(280,17),UDim2.fromOffset(228,40))
     picker.Name="ThemePicker";picker.TextSize=13
-    local motionCard,motionHint=settingCard(88,"Animated accents","Slow color movement around the Hub.")
+    local motionCard,motionHint=settingCard(88,"Animated accents","Ambient motion, lights and reflections.")
     colorButton=button(motionCard,"ON",UDim2.fromOffset(430,17),UDim2.fromOffset(78,40))
     colorButton.Name="AnimatedAccents"
     local motionSkin=styleControl(colorButton,"toggle",nil,true)
@@ -837,7 +939,9 @@ do
         if paintColors then paintColors(colorClock) end
     end)
     refreshSettings=function()
-        for _,card in ipairs({themeCard,motionCard,preview}) do card.BackgroundColor3=panelColor end
+        for _,card in ipairs({themeCard,motionCard,preview}) do
+            card.BackgroundColor3=panelColor;card.BackgroundTransparency=theme=="Halloween" and .2 or 0
+        end
         themeHint.TextColor3=muted;motionHint.TextColor3=muted
         picker.BackgroundColor3=selectedBackground;picker.TextColor3=white
         picker.Text=(themeDisplay[theme] or theme)..(menuOpen and "   −" or "   +")
@@ -877,7 +981,13 @@ local pages = {
 }
 
 local function selectTab(index)
+    if destroyed or windowAnimating then return end
     closeThemes()
+    if design.pageTween then design.pageTween:Cancel() end
+    content.Position=UDim2.fromOffset(200,18)
+    design.pageTween=TweenService:Create(content,TweenInfo.new(.28,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),
+        {Position=UDim2.fromOffset(200,10)})
+    design.pageTween:Play()
     selectedTab = index
     mainScroll.Visible = index == 1
     ndsScroll.Visible = index == 2
@@ -890,6 +1000,7 @@ local function selectTab(index)
         tab.BackgroundColor3 = i == index
             and selectedBackground or idleTabColor
         tab.TextColor3 = i == index and white or muted
+        tab.BackgroundTransparency=theme=="Halloween" and (i==index and .12 or .62) or 0
         if tabMarks[i] then tabMarks[i].Visible=i==index end
     end
 
@@ -2250,8 +2361,8 @@ paintColors = function(phase)
         idleTabColor=Color3.fromRGB(20,22,27);muted=Color3.fromRGB(187,191,202)
     end
     if theme=="Halloween" then
-        dark=Color3.fromRGB(11,7,16);panelColor=Color3.fromRGB(31,18,29)
-        idleTabColor=Color3.fromRGB(23,13,29);muted=Color3.fromRGB(190,164,181)
+        dark=Color3.fromRGB(12,8,6);panelColor=Color3.fromRGB(29,19,15)
+        idleTabColor=Color3.fromRGB(23,15,12);muted=Color3.fromRGB(210,182,157)
     end
     local a = paletteColor(phase)
     local b = paletteColor(phase + 0.25)
@@ -2306,6 +2417,7 @@ paintColors = function(phase)
     gui:SetAttribute("PanelColor",panelColor)
     gui:SetAttribute("SecondaryColor",theme=="Halloween" and Color3.fromRGB(165,74,228) or b)
     for _,mark in ipairs(themeMarks) do
+        mark:Update()
         mark.plate.BackgroundColor3=dark
         mark.edge.Color=sequence
         mark.ink.Color=ColorSequence.new(white,accentColor)
@@ -2318,10 +2430,16 @@ paintColors = function(phase)
         glow.BackgroundColor3=i%2==0 and b or accentColor
         glow.BackgroundTransparency=.89+(animatedColors and math.sin(phase*TAU+i)*.025 or 0)
     end
+    design.backdrop.Visible=theme=="Halloween"
+    design.titleInk.Color=theme=="Halloween" and ColorSequence.new({
+        ColorSequenceKeypoint.new(0,Color3.fromRGB(255,178,94)),ColorSequenceKeypoint.new(.45,white),
+        ColorSequenceKeypoint.new(1,Color3.fromRGB(255,178,94))}) or ColorSequence.new(white,white)
     hubTitle.Font=theme=="Halloween" and Enum.Font.GrenzeGotisch or Enum.Font.GothamBold
     hubTitle.TextColor3=theme=="Halloween" and Color3.fromRGB(255,218,173) or white
     window.BackgroundColor3 = dark:Lerp(b, 0.018)
     sidebar.BackgroundColor3 = theme=="Crimson" and Color3.fromRGB(16,17,21) or dark:Lerp(c,0.04)
+    sidebar.BackgroundTransparency=theme=="Halloween" and .22 or 0
+    header.BackgroundColor3=dark;header.BackgroundTransparency=theme=="Halloween" and .4 or 1
 
     design.divider.BackgroundColor3=accentColor;design.footer.TextColor3=muted
     for _,entry in ipairs(design.leds) do
@@ -2352,6 +2470,7 @@ paintColors = function(phase)
     description.TextColor3 = muted
     for index, tab in ipairs(tabs) do
         tab.TextColor3 = index == selectedTab and white or muted
+        tab.BackgroundTransparency=theme=="Halloween" and (index==selectedTab and .12 or .62) or 0
         tab.BackgroundColor3 = index == selectedTab
             and selectedBackground or idleTabColor
     end
@@ -2370,18 +2489,52 @@ end
 
 paintColors(0)
 
+-- Motion runs every rendered frame; full theme painting runs only on theme changes
+-- for Halloween. Avoid hundreds of property/attribute writes every animation frame.
 local paletteElapsed=0
 connect(RunService.RenderStepped, function(dt)
-    if not animatedColors or windowAnimating then return end
+    if not animatedColors or windowAnimating or (not window.Visible and not launcher.Visible) then return end
+    dt=math.min(dt,.1)
+    design.clock=design.clock+dt
+    colorClock=(colorClock+dt/COLOR_CYCLE_SECONDS)%1
     paletteElapsed=paletteElapsed+dt
-    if paletteElapsed<.05 then return end
-    dt=paletteElapsed;paletteElapsed=0
+    if theme~="Halloween" and paletteElapsed>=.15 then
+        paletteElapsed=0;paintColors(colorClock)
+    end
+    local t=design.clock
+    for _,gradient in ipairs(gradients) do
+        gradient.Rotation=25+math.sin(t*.25)*32
+        gradient.Offset=Vector2.new(math.sin(t*.38)*.28,0)
+    end
+    accentGradient.Offset=Vector2.new(math.sin(t*.4)*.5,0)
+    if theme=="Halloween" and window.Visible then
+        design.art.Position=UDim2.fromOffset(-12+math.sin(t*.2)*4,-8+math.cos(t*.17)*3)
+        design.sweep.Position=UDim2.fromScale((t*.08)%1.8-.6,0)
+        design.titleInk.Offset=Vector2.new(math.sin(t*.45)*.38,0)
+        for i,glow in ipairs(design.inward) do
+            glow.BackgroundTransparency=.84+math.sin(t*.8+i)*.045
+        end
+        for _,ember in ipairs(design.embers) do
+            local progress=(t*ember.speed+ember.phase*450)%480
+            ember.dot.Position=UDim2.fromOffset(ember.x+math.sin(t*.6+ember.phase)*13,460-progress)
+            ember.dot.BackgroundTransparency=1-math.sin(math.clamp(progress/480,0,1)*math.pi)*.65
+        end
+        for i,entry in ipairs(design.leds) do
+            entry.core.BackgroundTransparency=.12+(.5+.5*math.sin(t*1.4+i))*.38
+        end
+    end
+end)
 
-    colorClock = (
-        colorClock + math.min(dt, .15) / COLOR_CYCLE_SECONDS
-    ) % 1
-
-    paintColors(colorClock)
+-- Resolve the supplied images concurrently, independently of video playback.
+task.spawn(function()
+    media.background=media.resolve("background")
+    if destroyed then return end
+    design.art.Image=media.background
+end)
+task.spawn(function()
+    media.logo=media.resolve("logo")
+    if destroyed then return end
+    for _,mark in ipairs(themeMarks) do mark.art.Image=media.logo;mark:Update() end
 end)
 
 local minimized = false
@@ -2468,8 +2621,9 @@ local function toggleMinimize()
     windowAnimating=true
     transitionShield.Visible=true
     local home=window.Position
-    local duration=.38
-    local easing=TweenInfo.new(duration,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut)
+    local duration=.42
+    local easing=TweenInfo.new(duration,Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
+    local restingScale=scale.Scale
     local closing=not minimized
     if closing and not launcherPlaced then
         clampLauncher(home.X.Offset,home.Y.Offset)
@@ -2500,9 +2654,10 @@ local function toggleMinimize()
     local fadeConnection=fade.Changed:Connect(applyFade)
     local shifted=UDim2.fromOffset(home.X.Offset,home.Y.Offset+12)
     if not closing then
-        launcher.Visible=false;window.Position=shifted
+        launcher.Visible=false;window.Position=shifted;scale.Scale=restingScale*.97
         applyFade(1);window.Visible=true
     end
+    TweenService:Create(scale,easing,{Scale=closing and restingScale*.97 or restingScale}):Play()
     local motion=TweenService:Create(window,easing,{Position=closing and shifted or home})
     TweenService:Create(fade,easing,{Value=closing and 1 or 0}):Play()
     motion:Play()
@@ -2512,7 +2667,7 @@ local function toggleMinimize()
         if destroyed then return end
         if closing then window.Visible=false end
         applyFade(0);fade:Destroy()
-        window.Position=home
+        window.Position=home;scale.Scale=restingScale
         minimized=closing;windowAnimating=false;transitionShield.Visible=false
         paintColors(colorClock)
         if closing then
@@ -2619,6 +2774,9 @@ connect(close.Activated, function()
         end
     end)
     TweenService:Create(fade,TweenInfo.new(.48,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Value=1}):Play()
+    TweenService:Create(scale,TweenInfo.new(.48,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),{Scale=scale.Scale*.97}):Play()
+    TweenService:Create(window,TweenInfo.new(.48,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),
+        {Position=UDim2.fromOffset(window.Position.X.Offset,window.Position.Y.Offset+12)}):Play()
     task.delay(.62,function() if gui.Parent then gui:Destroy() end end)
 end)
 
@@ -2829,7 +2987,10 @@ do
     end
     refreshExtras()
     intro.Reveal(function()
+        local home=window.Position
+        window.Position=UDim2.fromOffset(home.X.Offset,home.Y.Offset+14)
         window.Visible=true
+        TweenService:Create(window,TweenInfo.new(.5,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),{Position=home}):Play()
         toastScale.Scale=math.min(1,math.max(0.1,(surface.AbsoluteSize.X-24)/320))
         toast.Visible=true
         TweenService:Create(toast,TweenInfo.new(0.6,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),

@@ -10,6 +10,9 @@ sources={'hub':'HzReyzn Hub.lua','flight':'HzReyzn-Flight.lua',
 shared=(root/'runtime/NoFallDamage.luau').read_text().strip()
 for filename in ['HzReyzn Hub.lua','HzReyzn-Flight.lua']:
     assert (root/filename).read_text().count(shared)==1, 'Shared controller copies drifted: '+filename
+media=(root/'runtime/HalloweenMedia.luau').read_text().strip()
+for filename in ['HzReyzn Hub.lua','HzReyzn_Halloween.client.lua']:
+    assert (root/filename).read_text().count(media)==1, 'Media resolver copies drifted: '+filename
 parts=[]
 for name,path in sources.items():
     contents=(root/path).read_text()

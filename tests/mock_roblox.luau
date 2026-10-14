@@ -85,7 +85,7 @@ local function newWorld()
     env.Random={new=function()return {NextNumber=function(_,a,b)return (a+b)/2 end,NextInteger=function(_,a,b)return math.floor((a+b)/2)end}end}
     env.OverlapParams={new=function()return {}end};env.RaycastParams={new=function()return {}end}
     local methods={}
-    local events={TeleportInitFailed=true,Destroying=true,ChildAdded=true,ChildRemoved=true,Changed=true,Activated=true,InputBegan=true,InputEnded=true,InputChanged=true,MouseEnter=true,MouseLeave=true,FocusLost=true,Died=true,StateChanged=true,CharacterAdded=true,CharacterRemoving=true,WindowFocusReleased=true,JumpRequest=true}
+    local events={Ended=true,Loaded=true,TeleportInitFailed=true,Destroying=true,ChildAdded=true,ChildRemoved=true,Changed=true,Activated=true,InputBegan=true,InputEnded=true,InputChanged=true,MouseEnter=true,MouseLeave=true,FocusLost=true,Died=true,StateChanged=true,CharacterAdded=true,CharacterRemoving=true,WindowFocusReleased=true,JumpRequest=true}
     local guiClasses={Frame=true,CanvasGroup=true,TextLabel=true,TextButton=true,TextBox=true,ImageLabel=true,ImageButton=true,ScrollingFrame=true,VideoFrame=true}
     local mt={}
     mt.__index=function(t,k)
@@ -109,6 +109,9 @@ local function newWorld()
             if old then old.ChildRemoved:Fire(t)end
             if v then v.ChildAdded:Fire(t)end
         else t._props[k]=v end
+        if k=='Video' and t.ClassName=='VideoFrame' then
+            t._props.IsLoaded=not (W.rejectWebm and v:find('webm'))
+        end
         if old~=v then
             if t._signals[k] then t._signals[k]:Fire(v)end
             if t._signals.Changed then t._signals.Changed:Fire(v)end
@@ -143,7 +146,8 @@ local function newWorld()
     function methods:ChangeState(s)local old=self.State;self.State=s;self.StateChanged:Fire(old,s)end
     function methods:GetState()return self.State end
     function methods:GetConnectedParts()return {}end
-    function methods:Play()self.IsPlaying=true end
+    function methods:Play()self.IsPlaying=true;if self.ClassName=='VideoFrame' then self.Playing=true end end
+    function methods:Pause()self.Playing=false end
     function methods:Stop()self.IsPlaying=false end
     function methods:Emit()end
     function methods:Clear()end
@@ -153,7 +157,7 @@ local function newWorld()
         local t=setmetatable({_props={ClassName=c,Name=c,Visible=true,Enabled=true,BackgroundTransparency=0,TextTransparency=0,ImageTransparency=0,Transparency=0,ScrollBarImageTransparency=0,
             Text="",Image="",BackgroundColor3=color.new(1,1,1),Size=env.UDim2.fromOffset(100,100),Position=env.UDim2.fromOffset(0,0),Value=0,CFrame=cf.new(),AssemblyLinearVelocity=vec.new(),AssemblyAngularVelocity=vec.new(),AssemblyMass=10,
             Health=100,AutoRotate=true,PlatformStand=false,Anchored=false,CanCollide=true,WalkSpeed=16,HipHeight=2,MoveDirection=vec.new(),FloorMaterial=env.Enum.Material.Air,State=env.Enum.HumanoidStateType.Freefall,
-            RigType=env.Enum.HumanoidRigType.R6,UseJumpPower=true,JumpPower=50,IsLoaded=true,Volume=0},_children={},_signals={},_attributes={}},mt)
+            RigType=env.Enum.HumanoidRigType.R6,UseJumpPower=true,JumpPower=50,IsLoaded=true,Volume=0,TimeLength=18.35,TimePosition=0,Video='',Playing=false},_children={},_signals={},_attributes={}},mt)
         if c=='BindableEvent'then t.Event=signal()end
         W.objects[#W.objects+1]=t;return t
     end}
@@ -186,6 +190,12 @@ local function newWorld()
     function W.step(count)
         for _=1,(count or 1)do
             W.time+=1/60
+            for _,object in ipairs(W.objects) do
+                if object.ClassName=='VideoFrame' and object.Parent and object.Video~='' and object.IsLoaded and object.Playing and not W.stallVideo then
+                    object.TimePosition=math.min(object.TimeLength,object.TimePosition+1/60)
+                    if object.TimePosition>=object.TimeLength then object.Playing=false;object.Ended:Fire(object.Video) end
+                end
+            end
             for _,key in ipairs({'PreSimulation','PostSimulation','Heartbeat','RenderStepped'})do services.RunService[key]:Fire(1/60)end
             local pending=W.tasks;W.tasks={}
             for _,t in ipairs(pending)do if t.at<=W.time then W.resume(t.co,table.unpack(t.args))else W.tasks[#W.tasks+1]=t end end
