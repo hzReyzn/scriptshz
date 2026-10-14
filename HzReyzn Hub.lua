@@ -18,6 +18,7 @@ end
 
 local connections = {}
 local destroyed = false
+local managedModules = {}
 local cleanupProtection = function() end
 local cleanupNDS = function() end
 local refreshNDS = function() end
@@ -46,11 +47,12 @@ end
 
 local white = Color3.fromRGB(249, 250, 252)
 local muted = Color3.fromRGB(148, 151, 164)
-local pink = Color3.fromRGB(242, 28, 52)
+local pink = Color3.fromRGB(255, 128, 38)
 local dark = Color3.fromRGB(10, 11, 15)
 local accentColor = pink
 local selectedBackground = Color3.fromRGB(57, 19, 27)
-local theme = "Crimson"
+local theme = "Halloween"
+local themeMarks = {}
 local themeButtons = {}
 local controlSkins = {}
 local paintColors
@@ -88,111 +90,107 @@ local function button(parent, text, position, size)
     return object
 end
 
--- Shared NoFallDamage: user's Heartbeat -> RenderStepped method, with ON/OFF cleanup.
+-- Shared NoFallDamage v4. One owner-counted controller for Hub and Fly.
+-- No yielding inside physics callbacks, no saved velocity written to a new body.
+-- Masks only downward velocity between physics steps, preserving normal fall motion.
+-- Client-side behavior is game-dependent; this does not override server damage.
 local function acquireNoFall(owner)
-    local pid=game.PlaceId
-    if pid~=189707 then
-        print("Error not found natural disasters survival game!")
-        return
-    end
-    local service=playerGui:FindFirstChild("HzReyzn_NoFallDamage_v3")
+    if game.PlaceId ~= 189707 or not owner or not owner.Parent then return nil end
+    local service = playerGui:FindFirstChild("HzReyzn_NoFallDamage_v4")
     if not service then
-        service=Instance.new("Folder")
-        service.Name="HzReyzn_NoFallDamage_v3"
-        local rs=game:GetService("RunService")
-        local hb,rsd=rs.Heartbeat,rs.RenderStepped
-        local lp=game:GetService("Players").LocalPlayer
-        local z=Vector3.zero
-        local pending,closed=nil,false
-        local heartbeatConnection,boundCharacter
-        local generation=0
-        local links={}
-        local function restore(sample)
-            if not sample or pending~=sample then return end
-            pending=nil
-            if sample.root.Parent then sample.root.AssemblyLinearVelocity=sample.velocity end
-        end
-        local function unbind()
-            if heartbeatConnection then heartbeatConnection:Disconnect();heartbeatConnection=nil end
-            restore(pending)
-        end
+        service = Instance.new("Folder")
+        service.Name = "HzReyzn_NoFallDamage_v4"
+        local closed, pending = false, nil
+        local links, leaseLinks = {}, {}
         local function hasOwners()
-            for _,child in ipairs(service:GetChildren()) do
-                if child:IsA("ObjectValue") and child.Value and child.Value.Parent then return true end
+            for _, lease in ipairs(service:GetChildren()) do
+                if lease:IsA("ObjectValue") and lease.Value and lease.Value.Parent then return true end
             end
             return false
         end
-        local function stop()
-            if closed then return end
-            closed=true;generation=generation+1;unbind()
-            for _,c in ipairs(links) do c:Disconnect() end
-            table.clear(links)
+        local function unwatch(lease)
+            local link = leaseLinks[lease]
+            if link then link:Disconnect(); leaseLinks[lease] = nil end
         end
-        local function listen(signal,callback)
-            links[#links+1]=signal:Connect(callback)
-        end
-        local function f(c)
-            generation=generation+1
-            local token=generation
-            unbind();boundCharacter=c
-            if not c then return end
-            task.spawn(function()
-                local r=c:WaitForChild("HumanoidRootPart",10)
-                if closed or token~=generation or c~=lp.Character or not r or not r.Parent then return end
-                local con
-                con=hb:Connect(function()
-                    if closed or token~=generation or c~=lp.Character or not r.Parent then
-                        con:Disconnect()
-                        if heartbeatConnection==con then heartbeatConnection=nil end
-                        if pending and pending.root==r then restore(pending) end
-                        return
-                    end
-                    if not hasOwners() then service:Destroy();return end
-                    -- One in-flight sample prevents overlapping Heartbeats from saving zero.
-                    if pending then return end
-                    local v=r.AssemblyLinearVelocity
-                    local sample={root=r,velocity=v}
-                    pending=sample
-                    r.AssemblyLinearVelocity=z
-                    rsd:Wait()
-                    restore(sample)
-                end)
-                heartbeatConnection=con
+        local function watch(lease)
+            if not lease:IsA("ObjectValue") or not lease.Value or leaseLinks[lease] then return end
+            leaseLinks[lease] = lease.Value.Destroying:Connect(function()
+                if lease.Parent then lease:Destroy() end
             end)
         end
-        listen(service.Destroying,stop)
-        listen(service.ChildRemoved,function()
+        local function restore()
+            local sample=pending;pending=nil
+            if not sample then return end
+            local r,h,c=sample.root,sample.humanoid,sample.character
+            if player.Character~=c or c:FindFirstChild("HumanoidRootPart")~=r
+                or not r.Parent or h.Health<=0 or h.PlatformStand or h.SeatPart or r.Anchored then return end
+            local flight=r:FindFirstChild("HZFlightVelocity")
+            if flight and flight.Enabled then return end
+            local current=r.AssemblyLinearVelocity
+            -- Restore only our unchanged sentinel. A jump, a mover or another controller wins.
+            if current.Y==0 and h.FloorMaterial==Enum.Material.Air then
+                r.AssemblyLinearVelocity=Vector3.new(current.X,sample.y,current.Z)
+            end
+        end
+        local function stop()
+            if closed then return end
+            closed = true
+            restore()
+            for _, link in ipairs(links) do link:Disconnect() end
+            for lease in pairs(leaseLinks) do unwatch(lease) end
+            table.clear(links)
+        end
+        links[#links + 1] = service.Destroying:Connect(stop)
+        links[#links + 1] = service.ChildAdded:Connect(watch)
+        links[#links + 1] = service.ChildRemoved:Connect(function(lease)
+            unwatch(lease)
             if not closed and service.Parent and not hasOwners() then service:Destroy() end
         end)
-        listen(lp.CharacterAdded,f)
-        listen(lp.CharacterRemoving,function(c) if c==boundCharacter then f(nil) end end)
-        service.Parent=playerGui
-        -- Upgrade an already running Hub/Fly without leaving the previous sampler alive.
-        local previous=playerGui:FindFirstChild("HzReyzn_NoFallDamage_v2")
-        if previous then
-            for _,lease in ipairs(previous:GetChildren()) do
-                if lease:IsA("ObjectValue") and lease.Value and lease.Value.Parent then lease.Parent=service end
+        local function step()
+            if closed then return end
+            if not hasOwners() then service:Destroy(); return end
+            -- Resolve the current body every step: covers late roots, respawns and replacements.
+            local character = player.Character
+            local h = character and character:FindFirstChildOfClass("Humanoid")
+            local r = character and character:FindFirstChild("HumanoidRootPart")
+            if not h or not r or not r.Parent or h.Health <= 0 or r.Anchored
+                or h.SeatPart or h.PlatformStand or h.Sit then return end
+            local flight = r:FindFirstChild("HZFlightVelocity")
+            if flight and flight.Enabled then return end
+            local state = h:GetState()
+            if state ~= Enum.HumanoidStateType.Freefall and state ~= Enum.HumanoidStateType.Jumping then return end
+            local velocity = r.AssemblyLinearVelocity
+            -- The next PreSimulation restores this Y before physics advances.
+            -- No RenderStepped:Wait(), overlapping samples or horizontal velocity reset.
+            if velocity.Y < -4 and not pending then
+                pending={root=r,humanoid=h,character=character,y=velocity.Y}
+                r.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
             end
-            previous:Destroy()
         end
-        f(lp.Character)
+        service.Parent = playerGui
+        -- Retire old samplers before they can restore a stale velocity. Preserve their live leases.
+        for _, name in ipairs({"HzReyzn_NoFallDamage_v2", "HzReyzn_NoFallDamage_v3"}) do
+            local previous = playerGui:FindFirstChild(name)
+            if previous then
+                for _, lease in ipairs(previous:GetChildren()) do
+                    if lease:IsA("ObjectValue") and lease.Value and lease.Value.Parent then
+                        lease.Parent = service; watch(lease)
+                    end
+                end
+                previous:Destroy()
+            end
+        end
+        links[#links + 1] = RunService.PreSimulation:Connect(restore)
+        links[#links + 1] = RunService.PostSimulation:Connect(step)
     end
-    local lease=Instance.new("ObjectValue")
-    lease.Name=owner.Name;lease.Value=owner;lease.Parent=service
-    local released,ownerConnection=false,nil
-    local function release()
+    local lease = Instance.new("ObjectValue")
+    lease.Name = owner.Name; lease.Value = owner; lease.Parent = service
+    local released = false
+    return function()
         if released then return end
-        released=true
-        if ownerConnection then ownerConnection:Disconnect() end
-        lease:Destroy()
-        if not service.Parent then return end
-        for _,child in ipairs(service:GetChildren()) do
-            if child:IsA("ObjectValue") and child.Value and child.Value.Parent then return end
-        end
-        service:Destroy()
+        released = true
+        if lease.Parent then lease:Destroy() end
     end
-    ownerConnection=owner.Destroying:Connect(release)
-    return release
 end
 -- End shared NoFallDamage.
 
@@ -210,6 +208,10 @@ connect(gui.Destroying, function()
     cleanupProtection()
     cleanupNDS()
     cleanupExtras()
+    for _, controller in pairs(managedModules) do
+        if controller.Destroy then pcall(controller.Destroy) end
+    end
+    table.clear(managedModules)
 
     for _, connection in ipairs(connections) do
         connection:Disconnect()
@@ -224,323 +226,59 @@ local surface = make("Frame", gui, {
 })
 
 
--- Cinematic intro: drawn locally, with the supplied logos and reference audio.
-local intro=(function()
-    local started=os.clock()
-    local duration=16.5
-    local ready,leaving,skipRequested=false,false,false
-    local reveal
-    local red=Color3.fromRGB(242,28,52)
-    local silver=Color3.fromRGB(228,235,240)
-    local black=Color3.fromRGB(3,4,5)
-    local layer=make("Frame",gui,{Name="Loading",Size=UDim2.fromScale(1,1),
-        BackgroundColor3=black,BorderSizePixel=0,ZIndex=50,Active=true})
-    local stage=make("CanvasGroup",layer,{Name="IntroHUD",AnchorPoint=Vector2.new(.5,.5),
-        Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(800,640),
-        BackgroundTransparency=1,GroupTransparency=1})
-    local scaling=make("UIScale",stage,{Scale=1})
-    local function fit()
-        local size=surface.AbsoluteSize
-        scaling.Scale=math.max(.1,math.min(1.2,(size.X-32)/800,(size.Y-76)/640))
+-- Only the Halloween intro runs. Its screen and sound are owned by this Hub instance.
+local intro = {}
+function intro.Reveal(callback)
+    local fetching = true
+    local function reveal()
+        if not destroyed and gui.Parent then callback() end
     end
-    local resizeConnection=connect(surface:GetPropertyChangedSignal("AbsoluteSize"),fit)
-    fit()
-    local function frame(parent,x,y,w,h,color,alpha)
-        return make("Frame",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
-            BackgroundColor3=color or silver,BackgroundTransparency=alpha or 0,BorderSizePixel=0})
-    end
-    local function group(parent)
-        return make("CanvasGroup",parent,{Size=UDim2.fromScale(1,1),BackgroundTransparency=1})
-    end
-    local function line(parent,x1,y1,x2,y2,width,color,alpha)
-        local dx,dy=x2-x1,y2-y1
-        local object=frame(parent,(x1+x2)*.5,(y1+y2)*.5,math.sqrt(dx*dx+dy*dy),width,color,alpha)
-        object.AnchorPoint=Vector2.new(.5,.5);object.Rotation=math.deg(math.atan2(dy,dx))
-        return object
-    end
-    local function text(parent,value,x,y,w,h,size,color)
-        local object=label(parent,value,UDim2.fromOffset(x,y),UDim2.fromOffset(w,h),size,color or silver)
-        object.TextXAlignment=Enum.TextXAlignment.Center;object.Font=Enum.Font.GothamBold
-        return object
-    end
-    local grid=group(stage)
-    for n=-14,14 do
-        local fade=.93+math.abs(n)/14*.06
-        line(grid,400+n*22,30,400+n*22,600,1,silver,fade)
-        line(grid,75,310+n*20,725,310+n*20,1,silver,fade)
-    end
-    for inset=0,1 do
-        local d=300-inset*30
-        line(grid,400,310-d,400+d,310,1,silver,.78+inset*.12)
-        line(grid,400+d,310,400,310+d,1,silver,.78+inset*.12)
-        line(grid,400,310+d,400-d,310,1,silver,.78+inset*.12)
-        line(grid,400-d,310,400,310-d,1,silver,.78+inset*.12)
-    end
-    -- Reusable 2D particles stay behind the logo and share the intro's cleanup.
-    local energy=make("Frame",stage,{Name="IntroVFX",Size=UDim2.fromScale(1,1),BackgroundTransparency=1})
-    local sparks={}
-    for i=1,28 do
-        local particle=frame(energy,400,310,i%4==0 and 12 or 3,i%4==0 and 1 or 3,red,1)
-        particle.Name="IntroSpark";particle.AnchorPoint=Vector2.new(.5,.5)
-        local glow=frame(particle,-3,-3,i%4==0 and 18 or 9,i%4==0 and 7 or 9,red,1)
-        round(glow,5);round(particle,2)
-        sparks[i]={core=particle,glow=glow,angle=i*2.39996,phase=i*.137,duration=3.6+(i%5)*.35}
-    end
-    local comets={}
-    for i=1,6 do
-        local comet=frame(energy,400,310,34,2,red,1)
-        comet.Name="OrbitStreak";comet.AnchorPoint=Vector2.new(.5,.5)
-        make("UIGradient",comet,{Transparency=NumberSequence.new({
-            NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(.8,.2),NumberSequenceKeypoint.new(1,0)})})
-        comets[i]=comet
-    end
-    local pulses={}
-    for i=1,2 do
-        local pulse=frame(energy,400,310,310,310,red,1)
-        pulse.Name="EnergyPulse";pulse.AnchorPoint=Vector2.new(.5,.5);round(pulse,400)
-        pulses[i]={frame=pulse,edge=make("UIStroke",pulse,{Color=red,Thickness=i==1 and 2 or 6,Transparency=1})}
-    end
-    local pulseStarted,lastVFX=0,-1
-    local accents={}
-    local function accent(object) accents[#accents+1]=object;return object end
-    local function ring(radius,arcs,width,alpha)
-        local parent=make("Frame",stage,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(400,310),
-            Size=UDim2.fromOffset(480,480),BackgroundTransparency=1})
-        for _,span in ipairs(arcs) do
-            local count=math.ceil((span[2]-span[1])/5)
-            for j=0,count-1 do
-                local a=math.rad(span[1]+(span[2]-span[1])*j/count)
-                local b=math.rad(span[1]+(span[2]-span[1])*(j+1)/count)
-                accent(line(parent,240+math.cos(a)*radius,240+math.sin(a)*radius,
-                    240+math.cos(b)*radius,240+math.sin(b)*radius,width,silver,alpha))
-            end
-        end
-        return parent
-    end
-    local outer=ring(197,{{-75,28},{65,160},{205,250}},1.5,.15)
-    local middle=ring(174,{{0,125},{150,280},{302,330}},3,.5)
-    local inner=ring(149,{{0,360}},1,.56)
-    local ticks=make("Frame",stage,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(400,310),
-        Size=UDim2.fromOffset(440,440),BackgroundTransparency=1})
-    for n=0,95 do
-        if n%24<19 then
-            local a=math.rad(n*3.75)
-            local r=n%4==0 and 182 or 187
-            accent(line(ticks,220+math.cos(a)*r,220+math.sin(a)*r,
-                220+math.cos(a)*192,220+math.sin(a)*192,n%4==0 and 2 or 1,silver,.24))
-        end
-    end
-    for _,y in ipairs({38,554}) do
-        local sign=y<310 and 1 or -1
-        accent(line(stage,320,y+sign*35,370,y,2,silver,.6))
-        accent(line(stage,370,y,430,y,2,silver,.6))
-        accent(line(stage,430,y,480,y+sign*35,2,silver,.6))
-    end
-    local pointers=group(stage)
-    for n=0,3 do
-        local a=n*math.pi*.5
-        local x,y=400+math.cos(a)*199,310+math.sin(a)*199
-        local tx,ty=-math.sin(a)*6,math.cos(a)*6
-        line(pointers,x+tx,y+ty,x-tx,y-ty,1.5,silver,0)
-        line(pointers,x+tx,y+ty,x-math.cos(a)*9,y-math.sin(a)*9,1.5,silver,0)
-        line(pointers,x-tx,y-ty,x-math.cos(a)*9,y-math.sin(a)*9,1.5,silver,0)
-    end
-    local halo=make("Frame",stage,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(400,310),
-        Size=UDim2.fromOffset(417,417),BackgroundTransparency=1})
-    round(halo,210)
-    local haloEdge=make("UIStroke",halo,{Thickness=13,Color=red,Transparency=.82})
-    make("UIGradient",haloEdge,{Transparency=NumberSequence.new({
-        NumberSequenceKeypoint.new(0,.1),NumberSequenceKeypoint.new(.4,.8),
-        NumberSequenceKeypoint.new(.7,.2),NumberSequenceKeypoint.new(1,.9)}),Rotation=25})
-    local rotor=ring(217,{{-30,24},{145,205}},2,.08)
-    for _,child in ipairs(rotor:GetChildren()) do
-        if child:IsA("Frame") then child.BackgroundColor3=red end
-    end
-    local leds={}
-    for n=0,71 do
-        local a=math.rad(n*5)
-        local led=line(stage,400+math.cos(a)*207,310+math.sin(a)*207,
-            400+math.cos(a)*213,310+math.sin(a)*213,2.5,red,.7)
-        leds[#leds+1]=led
-    end
-    -- Luminous curved side brackets, as in the reference.
-    for _,sign in ipairs({-1,1}) do
-        for n=0,15 do
-            local a=math.rad(-21+n*42/16)
-            local b=math.rad(-21+(n+1)*42/16)
-            local x1,x2=400+sign*math.cos(a)*273,400+sign*math.cos(b)*273
-            local y1,y2=310+math.sin(a)*273,310+math.sin(b)*273
-            line(stage,x1,y1,x2,y2,9,red,.95)
-            line(stage,x1,y1,x2,y2,4,red,.8)
-            line(stage,x1,y1,x2,y2,1.4,red,.1)
-        end
-        for _,y in ipairs({213,407}) do line(stage,400+sign*255,y,400+sign*228,y,2,red,.3) end
-    end
-    local lightSweep=frame(stage,105,100,590,2,red,.9)
-    make("UIGradient",lightSweep,{Transparency=NumberSequence.new({
-        NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(.5,0),NumberSequenceKeypoint.new(1,1)})})
-    local statusDot=frame(stage,335,586,4,4,red,.1);round(statusDot,2)
-    for _,v in ipairs({{338,47},{442,47},{338,566},{442,566}}) do
-        for j=0,6 do line(stage,v[1]+j*3,v[2],v[1]+j*3,v[2]+9,1,silver,.6) end
-    end
-    local core=group(stage);core.GroupTransparency=1
-    local logo=make("ImageLabel",core,{Name="PrimaryLogo",AnchorPoint=Vector2.new(.5,.5),
-        Position=UDim2.fromOffset(400,310),Size=UDim2.fromOffset(248,248),BackgroundTransparency=1,
-        Image="rbxassetid://115928147610604",ScaleType=Enum.ScaleType.Fit})
-    local charge=group(stage)
-    local chargePlate=frame(charge,182,265,436,90,black,.02)
-    -- Hexagonal end caps and double outline around the loading segments.
-    for _,pad in ipairs({0,5}) do
-        local c=pad==0 and silver or Color3.fromRGB(91,97,106)
-        local pts={{182-pad,265-pad},{618+pad,265-pad},{645+pad,310},{618+pad,355+pad},{182-pad,355+pad},{155-pad,310}}
-        for j=1,6 do local a,b=pts[j],pts[j%6+1];line(charge,a[1],a[2],b[1],b[2],1.5,c,.15) end
-    end
-    local segments={}
-    for n=1,21 do
-        local segment=frame(charge,179+n*19,276,11,68,silver,.93)
-        segment.Rotation=26;segments[n]=segment
-    end
-    local counterPlate=frame(charge,373,287,54,46,black,0)
-    counterPlate.Rotation=30
-    make("UIStroke",counterPlate,{Color=red,Thickness=1.5})
-    local percent=text(charge,"0",373,288,54,44,17,silver)
-    local banner=group(stage);banner.GroupTransparency=1
-    local bannerPlate=frame(banner,203,277,394,66,Color3.fromRGB(43,2,9),.08)
-    make("UIStroke",bannerPlate,{Color=red,Thickness=2})
-    for n=0,8 do
-        local stripe=frame(banner,313+n*19,254,9,16,red,.3);stripe.Rotation=28
-        local stripe2=frame(banner,313+n*19,350,9,16,red,.3);stripe2.Rotation=28
-    end
-    local title=text(banner,"HzReyzn Hub",211,281,378,56,38,red)
-    local subtitle=text(stage,"LOADING",345,575,120,24,15,red)
-    local subline=frame(stage,348,603,104,2,red,.1)
-    local skip=make("TextButton",layer,{Name="SkipIntro",Position=UDim2.fromOffset(24,52),
-        Size=UDim2.fromOffset(120,36),Text="skip load",Font=Enum.Font.GothamBold,TextSize=12,
-        TextColor3=silver,BackgroundColor3=Color3.fromRGB(18,19,22),BackgroundTransparency=.12,
-        BorderSizePixel=0,AutoButtonColor=true,ZIndex=2})
-    round(skip,7);make("UIStroke",skip,{Color=red,Thickness=1,Transparency=.25})
-    local sound
-    local renderConnection
-    local function finish()
-        if leaving or destroyed then return end
-        if not ready then skipRequested=true;return end
-        leaving=true;skip.Active=false
-        if renderConnection then renderConnection:Disconnect() end
-        resizeConnection:Disconnect()
-        if sound then TweenService:Create(sound,TweenInfo.new(.3),{Volume=0}):Play() end
-        TweenService:Create(stage,TweenInfo.new(.45,Enum.EasingStyle.Quart,Enum.EasingDirection.In),
-            {GroupTransparency=1,Position=UDim2.new(.5,0,.5,32)}):Play()
-        TweenService:Create(layer,TweenInfo.new(.45),{BackgroundTransparency=1}):Play()
-        TweenService:Create(skip,TweenInfo.new(.2),{TextTransparency=1,BackgroundTransparency=1}):Play()
-        task.delay(.45,function()
-            if sound then sound:Stop() end
-            if destroyed then return end
-            layer:Destroy()
-            if reveal then reveal() end
-        end)
-    end
-    connect(skip.Activated,finish)
-    task.spawn(function()
-        -- These are fixed local audio assets, never executable downloaded code.
-        local getAsset=getcustomasset or getsynasset
-        if type(getAsset)~="function" or type(writefile)~="function" then return end
-        local ok,err=pcall(function()
-            local path="HzReyzn_Intro_20260923.ogg"
-            if type(isfile)~="function" or not isfile(path) then
-                local data=game:HttpGet("https://raw.githubusercontent.com/hzReyzn/scriptshz/main/assets/HzReyzn-Intro.ogg")
-                if destroyed or leaving then return end
-                if data:sub(1,4)~="OggS" then return end
-                writefile(path,data)
-            end
-            if destroyed or leaving then return end
-            sound=make("Sound",layer,{Name="IntroAudio",SoundId=getAsset(path),Volume=.55,Looped=false})
-            local deadline=os.clock()+4
-            while not sound.IsLoaded and not destroyed and not leaving and os.clock()<deadline do task.wait(.05) end
-            if destroyed or leaving or not sound.IsLoaded then return end
-            sound.TimePosition=math.min(os.clock()-started,math.max(0,sound.TimeLength-.05))
-            sound:Play()
-        end)
-        if not ok then warn("[HzReyzn Intro] Local audio unavailable: "..tostring(err)) end
+    task.delay(25, function()
+        if not fetching or destroyed then return end
+        fetching = false
+        warn("[HzReyzn] Intro download timed out; opening the Hub.")
+        reveal()
     end)
     task.spawn(function()
-        pcall(function() game:GetService("ContentProvider"):PreloadAsync({logo}) end)
+        local ok, source = pcall(function()
+            return game:HttpGet("https://raw.githubusercontent.com/hzReyzn/scriptshz/main/HzReyzn_Halloween.client.lua")
+        end)
+        if not fetching or destroyed or not gui.Parent then return end
+        fetching = false
+        if ok and type(source) == "string" then
+            local executable, err = loadstring(source)
+            if executable then
+                local ran, outcome = pcall(executable, {Owner = gui})
+                if ran and outcome == "cancelled" then return end
+                if not ran then warn("[HzReyzn] Intro: " .. tostring(outcome)) end
+            else warn("[HzReyzn] Intro: " .. tostring(err)) end
+        else warn("[HzReyzn] Intro unavailable: " .. tostring(source)) end
+        reveal()
     end)
-    local lastPhase,lastSegment=nil,-1
-    renderConnection=connect(RunService.RenderStepped,function()
-        if destroyed or leaving then return end
-        local t=os.clock()-started
-        local redBlend=math.clamp((t-7.8)/2,0,1)
-        local phase=t<4.1 and 1 or (t<9.3 and 2 or (t<11.4 and 3 or 4))
-        if phase~=lastPhase then
-            lastPhase=phase;pulseStarted=t
-            TweenService:Create(charge,TweenInfo.new(.3),{GroupTransparency=phase==1 and 0 or 1}):Play()
-            TweenService:Create(core,TweenInfo.new(.45),{GroupTransparency=(phase==2 or phase==4) and 0 or 1}):Play()
-            TweenService:Create(banner,TweenInfo.new(.35),{GroupTransparency=phase>=3 and 0 or 1}):Play()
-            if phase==4 then
-                TweenService:Create(bannerPlate,TweenInfo.new(.4),{BackgroundTransparency=.7}):Play()
-                TweenService:Create(banner,TweenInfo.new(.45,Enum.EasingStyle.Quart),{Position=UDim2.fromOffset(0,168)}):Play()
-            end
-        end
-        local progress=math.clamp((t-.6)/3.2,0,1)
-        local lit=math.floor(progress*#segments)
-        if lit~=lastSegment then
-            lastSegment=lit;percent.Text=tostring(math.floor(progress*100))
-            for j,segment in ipairs(segments) do segment.BackgroundTransparency=j<=lit and .08 or .93 end
-        end
-        outer.Rotation=t*13;middle.Rotation=-t*21;ticks.Rotation=t*6
-        local tint=silver:Lerp(red,redBlend)
-        -- Recolor once during transition; animation moves containers, not individual lines.
-        if t>=7.8 and t<=10 then
-            for _,object in ipairs(accents) do object.BackgroundColor3=tint end
-        end
-        logo.Size=UDim2.fromOffset(248+4*math.sin(t*1.7),248+4*math.sin(t*1.7))
-        logo.Rotation=phase==2 and math.sin(t*1.5)*1.5 or 0
-        halo.Rotation=-t*7
-        rotor.Rotation=t*34
-        lightSweep.Position=UDim2.fromOffset(105,100+(t*.2%1)*400)
-        lightSweep.BackgroundTransparency=.89+.04*math.sin(t*2)
-        for j,led in ipairs(leds) do
-            local wave=(j/#leds-t*.18)%1
-            led.BackgroundTransparency=wave<.22 and .06+wave*2.1 or .83
-        end
-        haloEdge.Transparency=.8+.06*math.sin(t*2.2)
-        statusDot.BackgroundTransparency=.2+.25*(1+math.sin(t*3))*.5
-        subtitle.TextTransparency=.12+.16*(1+math.sin(t*3))*.5
-        if t-lastVFX>=1/30 then
-            lastVFX=t
-            for _,spark in ipairs(sparks) do
-                local age=(t/spark.duration+spark.phase)%1
-                local angle=spark.angle+math.sin(t*.45+spark.phase)*.08
-                local radius=174+age*118
-                local visibility=math.sin(age*math.pi)^2
-                spark.core.Position=UDim2.fromOffset(400+math.cos(angle)*radius,310+math.sin(angle)*radius)
-                spark.core.Rotation=math.deg(angle)
-                spark.core.BackgroundColor3=silver:Lerp(red,.4+redBlend*.6)
-                spark.core.BackgroundTransparency=1-visibility*.75
-                spark.glow.BackgroundTransparency=1-visibility*.09
-            end
-            for i,comet in ipairs(comets) do
-                local angle=t*(i%2==0 and -.23 or .3)+i*math.pi/3
-                local radius=238+(i%3)*21
-                comet.Position=UDim2.fromOffset(400+math.cos(angle)*radius,310+math.sin(angle)*radius)
-                comet.Rotation=math.deg(angle)+90
-                comet.BackgroundTransparency=.45+.2*math.sin(t*.9+i)
-            end
-            for i,pulse in ipairs(pulses) do
-                local age=math.clamp((t-pulseStarted-(i-1)*.18)/1.5,0,1)
-                local diameter=310+240*(1-(1-age)^2)
-                pulse.frame.Size=UDim2.fromOffset(diameter,diameter)
-                pulse.edge.Transparency=1-math.sin(age*math.pi)*(i==1 and .28 or .08)
-            end
-        end
-        if t>=duration then finish() end
-    end)
-    TweenService:Create(stage,TweenInfo.new(.7,Enum.EasingStyle.Sine),{GroupTransparency=0}):Play()
-    return {Reveal=function(callback)
-        reveal=callback;ready=true
-        if skipRequested or os.clock()-started>=duration then finish() end
-    end}
-end)()
+end
+
+-- Resolution-independent HZ marks. All instances share the selected theme.
+local function themeLogo(host)
+    host.ImageTransparency = 1
+    local plate = make("Frame",host,{Name="ThemeLogo",Size=UDim2.fromScale(1,1),
+        BackgroundColor3=dark,BackgroundTransparency=.12,BorderSizePixel=0})
+    round(plate,12)
+    local edge=make("UIStroke",plate,{Thickness=1.2,Transparency=.18,Color=white})
+    local gradient=make("UIGradient",edge,{Rotation=25})
+    local pumpkin=make("Frame",plate,{Name="Pumpkin",Size=UDim2.fromScale(1,1),BackgroundTransparency=1})
+    local lobes={}
+    for _,x in ipairs({.12,.3,.48}) do
+        local lobe=make("Frame",pumpkin,{Position=UDim2.fromScale(x,.23),Size=UDim2.fromScale(.4,.58),
+            BackgroundColor3=accentColor,BackgroundTransparency=.77,BorderSizePixel=0})
+        round(lobe,20);lobes[#lobes+1]=lobe
+    end
+    local stem=make("Frame",pumpkin,{Position=UDim2.fromScale(.49,.12),Size=UDim2.fromScale(.07,.16),
+        Rotation=18,BackgroundColor3=accentColor,BorderSizePixel=0})
+    local mark=label(plate,"HZ",UDim2.fromScale(.09,.12),UDim2.fromScale(.82,.78),24,white)
+    mark.TextScaled=true;mark.Font=Enum.Font.GrenzeGotisch;mark.TextXAlignment=Enum.TextXAlignment.Center
+    local ink=make("UIGradient",mark,{Rotation=90})
+    themeMarks[#themeMarks+1]={plate=plate,edge=gradient,mark=mark,ink=ink,pumpkin=pumpkin,lobes=lobes,stem=stem}
+end
 
 -- Keep text and controls native: the persistent window is not a canvas texture.
 local windowAnimating = false
@@ -574,7 +312,9 @@ gradientBorder(window, 2, 0)
 
 -- Native controls: black when off, illuminated by the selected theme when on.
 local function controlPalette()
-    if theme=="Crimson" then
+    if theme=="Halloween" then
+        return Color3.fromRGB(255,125,32),Color3.fromRGB(126,50,186),Color3.fromRGB(255,221,168)
+    elseif theme=="Crimson" then
         return Color3.fromRGB(250,35,60),Color3.fromRGB(130,12,34),Color3.fromRGB(211,215,224)
     elseif theme=="Ocean Theme" then
         return Color3.fromRGB(58,137,255),Color3.fromRGB(51,227,240),Color3.fromRGB(166,239,255)
@@ -762,7 +502,7 @@ do
     end)
 end
 
-local design={leds={}}
+local design={leds={},inward={}}
 do
     local inset=make("Frame",window,{Position=UDim2.fromOffset(6,6),Size=UDim2.new(1,-12,1,-12),
         BackgroundTransparency=1,BorderSizePixel=0,ZIndex=0})
@@ -775,6 +515,18 @@ do
         local led=make("Frame",window,{Position=UDim2.fromOffset(edge[1],edge[2]),
             Size=UDim2.fromOffset(edge[3],edge[4]),BackgroundColor3=accentColor,BorderSizePixel=0})
         round(led,1);design.leds[#design.leds+1]={core=led,glow=glow,mix=0}
+    end
+    for _,data in ipairs({
+        {UDim2.fromScale(0,0),UDim2.new(1,0,0,38),90},
+        {UDim2.new(0,0,1,-38),UDim2.new(1,0,0,38),270},
+        {UDim2.fromScale(0,0),UDim2.new(0,28,1,0),0},
+        {UDim2.new(1,-28,0,0),UDim2.new(0,28,1,0),180},
+    }) do
+        local glow=make("Frame",window,{Name="InwardNeon",Position=data[1],Size=data[2],
+            BackgroundColor3=accentColor,BackgroundTransparency=.89,BorderSizePixel=0,ZIndex=0})
+        make("UIGradient",glow,{Rotation=data[3],Transparency=NumberSequence.new({
+            NumberSequenceKeypoint.new(0,0),NumberSequenceKeypoint.new(.3,.65),NumberSequenceKeypoint.new(1,1)})})
+        design.inward[#design.inward+1]=glow
     end
     design.footer=label(window,"Made By hzReyzn",UDim2.fromOffset(204,427),UDim2.fromOffset(300,14),10,muted)
     design.footer.TextXAlignment=Enum.TextXAlignment.Right
@@ -803,6 +555,7 @@ local logo=make("ImageLabel",header,{
     Name="HeaderLogo",Position=UDim2.fromOffset(20,9),Size=UDim2.fromOffset(46,46),
     BackgroundTransparency=1,Image="rbxassetid://115928147610604",ScaleType=Enum.ScaleType.Fit,
 })
+themeLogo(logo)
 local hubTitle=label(header,"HzReyzn Hub",UDim2.fromOffset(78,19),UDim2.fromOffset(360,27),21,white)
 hubTitle.Font=Enum.Font.GothamBold
 design.divider=make("Frame",header,{Position=UDim2.fromOffset(20,63),Size=UDim2.new(1,-40,0,1),BackgroundColor3=muted,BackgroundTransparency=.5,BorderSizePixel=0})
@@ -962,10 +715,10 @@ local refreshChangelog
 do
     -- Use "+" for additions and "-" for removals in future entries.
     local entries={
-        {"+","Better Loading Screen"},
-        {"+","More theme"},
-        {"+","New logo"},
-        {"+","Better desingn Ui"},
+        {"+","Halloween intro + default theme"},
+        {"+","Neon minimize and close effects"},
+        {"+","Flight respawn + shared fall protection"},
+        {"+","Movement compatibility + cleanup"},
     }
     local changes=make("Frame",changelogScroll,{Name="ChangelogEntries",LayoutOrder=1,
         Size=UDim2.new(1,0,0,108),BackgroundColor3=panelColor,BorderSizePixel=0})
@@ -1003,7 +756,7 @@ local animatedColors = true
 local refreshSettings=function() end
 local closeThemes=function() end
 local colorButton
-local themeDisplay={Crimson="Crimson",Original="Original",["Black / Grey / White"]="Monochrome",RGB="RGB",["Ocean Theme"]="Ocean"}
+local themeDisplay={Halloween="Halloween",Crimson="Crimson",Original="Original",["Black / Grey / White"]="Monochrome",RGB="RGB",["Ocean Theme"]="Ocean"}
 do
     local function settingCard(y,titleText,detail)
         local card=make("Frame",settingsPage,{Position=UDim2.fromOffset(0,y),Size=UDim2.fromOffset(526,74),
@@ -1015,7 +768,7 @@ do
         return card,hint
     end
     local themeCard,themeHint=settingCard(0,"Theme","Choose your interface colors.")
-    local picker=button(themeCard,"Crimson   +",UDim2.fromOffset(280,17),UDim2.fromOffset(228,40))
+    local picker=button(themeCard,"Halloween   +",UDim2.fromOffset(280,17),UDim2.fromOffset(228,40))
     picker.Name="ThemePicker";picker.TextSize=13
     local motionCard,motionHint=settingCard(88,"Animated accents","Slow color movement around the Hub.")
     colorButton=button(motionCard,"ON",UDim2.fromOffset(430,17),UDim2.fromOffset(78,40))
@@ -1024,15 +777,16 @@ do
     local preview=make("Frame",settingsPage,{Position=UDim2.fromOffset(0,176),Size=UDim2.fromOffset(526,61),
         BackgroundColor3=panelColor,BorderSizePixel=0})
     round(preview,10)
-    make("ImageLabel",preview,{Position=UDim2.fromOffset(12,9),Size=UDim2.fromOffset(43,43),BackgroundTransparency=1,
+    local previewLogo=make("ImageLabel",preview,{Position=UDim2.fromOffset(12,9),Size=UDim2.fromOffset(43,43),BackgroundTransparency=1,
         Image="rbxassetid://115928147610604",ScaleType=Enum.ScaleType.Fit})
+    themeLogo(previewLogo)
     local previewTitle=label(preview,"HzReyzn Hub",UDim2.fromOffset(68,11),UDim2.fromOffset(260,22),14,white)
     previewTitle.Font=Enum.Font.GothamBold
-    local previewText=label(preview,"Crimson",UDim2.fromOffset(68,34),UDim2.fromOffset(320,15),10,accentColor)
+    local previewText=label(preview,"Halloween",UDim2.fromOffset(68,34),UDim2.fromOffset(320,15),10,accentColor)
     local outside=make("TextButton",window,{Name="ThemeDismiss",Size=UDim2.fromScale(1,1),Text="",
         BackgroundTransparency=1,Visible=false,AutoButtonColor=false,ZIndex=20})
-    local menu=make("Frame",window,{Name="ThemeMenu",Position=UDim2.fromOffset(472,224),
-        Size=UDim2.fromOffset(264,208),BackgroundColor3=dark,BorderSizePixel=0,Visible=false,
+    local menu=make("Frame",window,{Name="ThemeMenu",Position=UDim2.fromOffset(472,190),
+        Size=UDim2.fromOffset(264,242),BackgroundColor3=dark,BorderSizePixel=0,Visible=false,
         ZIndex=21,ClipsDescendants=true})
     round(menu,12);local menuEdge=gradientBorder(menu,1.3,.15)
     label(menu,"SELECT THEME",UDim2.fromOffset(14,8),UDim2.fromOffset(230,20),9,muted)
@@ -1042,11 +796,11 @@ do
         if menuTween then menuTween:Cancel() end
         outside.Visible=on
         if on then
-            menu.Visible=true;menu.Position=UDim2.fromOffset(472,216);menu.Size=UDim2.fromOffset(264,0)
+            menu.Visible=true;menu.Position=UDim2.fromOffset(472,182);menu.Size=UDim2.fromOffset(264,0)
             menuTween=TweenService:Create(menu,TweenInfo.new(.18,Enum.EasingStyle.Quart),
-                {Position=UDim2.fromOffset(472,224),Size=UDim2.fromOffset(264,208)})
+                {Position=UDim2.fromOffset(472,190),Size=UDim2.fromOffset(264,242)})
         else
-            menuTween=TweenService:Create(menu,TweenInfo.new(.12),{Position=UDim2.fromOffset(472,216),Size=UDim2.fromOffset(264,0)})
+            menuTween=TweenService:Create(menu,TweenInfo.new(.12),{Position=UDim2.fromOffset(472,182),Size=UDim2.fromOffset(264,0)})
             task.delay(.12,function() if not destroyed and not menuOpen then menu.Visible=false end end)
         end
         menuTween:Play()
@@ -1056,6 +810,7 @@ do
     connect(picker.Activated,function() setOpen(not menuOpen) end)
     connect(outside.Activated,closeThemes)
     local options={
+        {"Halloween",Color3.fromRGB(255,128,38)},
         {"Crimson",Color3.fromRGB(242,28,52)},
         {"Black / Grey / White",Color3.fromRGB(216,218,225)},
         {"Ocean Theme",Color3.fromRGB(55,193,244)},
@@ -1168,7 +923,7 @@ end
 selectTab(1)
 -- Botones para scripts externos.
 
-local function scriptButton(parent, name, url, order)
+local function scriptButton(parent, name, url, order, managed)
     local row = button(
         parent, "", UDim2.fromOffset(0, 0),
         UDim2.new(1, 0, 0, 78)
@@ -1188,6 +943,11 @@ local function scriptButton(parent, name, url, order)
 
     connect(row.Activated, function()
         if busy or destroyed then return end
+        local existing=managed and managedModules[name]
+        if existing and existing.Gui and existing.Gui.Parent then
+            if existing.Focus then existing.Focus() end
+            return
+        end
         busy = true
         skin:SetBusy(true)
         show("Loading...", accentColor)
@@ -1212,7 +972,12 @@ local function scriptButton(parent, name, url, order)
 
                 if destroyed then return end
                 show("Starting...", accentColor)
-                executable()
+                local controller=executable(managed and {Owner=gui,ThemeSource=gui} or nil)
+                if managed and type(controller)=="table" then
+                    if destroyed then
+                        if controller.Destroy then controller.Destroy() end
+                    else managedModules[name]=controller end
+                end
             end)
 
             if destroyed then return end
@@ -1250,7 +1015,7 @@ scriptButton(
     ndsScroll,
     "Fly SuperHero",
     "https://raw.githubusercontent.com/hzReyzn/scriptshz/main/HzReyzn-Flight.lua",
-    -1
+    -1, true
 )
 
 -- Anti Earthquake adapter: the standalone body below is preserved byte for byte.
@@ -1609,7 +1374,8 @@ do
             return
         end
 
-        if humanoid.SeatPart or root.Anchored then
+        local flight=root:FindFirstChild("HZFlightVelocity")
+        if humanoid.SeatPart or root.Anchored or humanoid.PlatformStand or (flight and flight.Enabled) then
             resetRecovery()
             return
         end
@@ -1682,7 +1448,7 @@ do
     local values = {gravity=math.floor(workspace.Gravity+0.5), speed=16}
     local controls = {}
     local char, hum, root
-    local speedHum, oldSpeed, oldGravity
+    local speedHum, oldSpeed, oldGravity, appliedSpeed, appliedGravity
     local jumpConnection
     local characterConnections = {}
     local pendingFloor = false
@@ -2131,9 +1897,9 @@ do
     end
     local function restoreSpeed()
         if speedHum and speedHum.Parent and oldSpeed ~= nil then
-            speedHum.WalkSpeed = oldSpeed
+            if speedHum.WalkSpeed==appliedSpeed then speedHum.WalkSpeed = oldSpeed end
         end
-        speedHum, oldSpeed = nil, nil
+        speedHum, oldSpeed, appliedSpeed = nil, nil, nil
         ndsSpeedLimit = 0
     end
     local function applySpeed()
@@ -2143,17 +1909,21 @@ do
             speedHum, oldSpeed = hum, hum.WalkSpeed
         end
         hum.WalkSpeed = values.speed
+        appliedSpeed = values.speed
         ndsSpeedLimit = values.speed
     end
     local function applyValue(key)
-        if key == "gravity" and flags.gravity then workspace.Gravity = values.gravity end
+        if key == "gravity" and flags.gravity then workspace.Gravity = values.gravity; appliedGravity = values.gravity end
         if key == "speed" and flags.speed then applySpeed() end
     end
     local function setFlag(key, on)
         flags[key] = on
         if key == "gravity" then
             if on then oldGravity = workspace.Gravity; applyValue(key)
-            elseif oldGravity ~= nil then workspace.Gravity = oldGravity; oldGravity = nil end
+            elseif oldGravity ~= nil then
+                if workspace.Gravity==appliedGravity then workspace.Gravity = oldGravity end
+                oldGravity,appliedGravity = nil,nil
+            end
         elseif key == "speed" then
             if on then applySpeed() else restoreSpeed() end
         elseif key == "noclip" then clearWalls()
@@ -2238,7 +2008,7 @@ do
         char=model;hum=nil;root=nil;lastJump=0
     end
     local function resolveCharacter(allowSeated)
-        if not char or not char.Parent then return false end
+        if not char or char~=player.Character or not char.Parent then return false end
         local h=char:FindFirstChildOfClass("Humanoid")
         root=char:FindFirstChild("HumanoidRootPart")
         if h ~= hum then
@@ -2248,7 +2018,7 @@ do
             if hum then
                 jumpConnection=hum.StateChanged:Connect(function(_,state)
                     if state==Enum.HumanoidStateType.Jumping then armFloor() end
-                    if state==Enum.HumanoidStateType.Dead then clearWalls();clearFloors();restoreSpeed() end
+                    if state==Enum.HumanoidStateType.Dead then clearWalls();clearFloors();clearWater();restoreSpeed() end
                 end)
             end
         end
@@ -2259,6 +2029,8 @@ do
     bind(player.Character)
     connect(UIS.JumpRequest,function()
         if destroyed or UIS:GetFocusedTextBox() or not resolveCharacter() then return end
+        local flight=root:FindFirstChild("HZFlightVelocity")
+        if hum.PlatformStand or (flight and flight.Enabled) then return end
         armFloor()
         if not flags.jump then return end
         local now=os.clock()
@@ -2347,6 +2119,16 @@ do
             pendingFloor=false
             return
         end
+        local flight=root:FindFirstChild("HZFlightVelocity")
+        if hum.PlatformStand or (flight and flight.Enabled) then
+            clearFloors();clearWater()
+            -- Wall noclip owns only pairwise constraints, so it may coexist with flight.
+            if flags.noclip then
+                scanClock=scanClock+dt
+                if scanClock>=.12 then scanClock=0;scanWalls() end
+            end
+            return
+        end
         updateWater(dt)
         if flags.water then updateParkedWater(dt) end
         updateWaterArea(dt)
@@ -2378,7 +2160,8 @@ do
         if jumpConnection then jumpConnection:Disconnect();jumpConnection=nil end
         for _,c in ipairs(characterConnections) do c:Disconnect() end
         restoreSpeed()
-        if oldGravity~=nil then workspace.Gravity=oldGravity;oldGravity=nil end
+        if oldGravity~=nil and workspace.Gravity==appliedGravity then workspace.Gravity=oldGravity end
+        oldGravity,appliedGravity=nil,nil
         clearWalls();clearFloors();clearWater()
         clipFolder:Destroy();floatFolder:Destroy()
     end
@@ -2408,13 +2191,18 @@ do
         ScaleType=Enum.ScaleType.Fit,Active=false,
     })
     round(image,10)
+    themeLogo(image)
 end
 
 local COLOR_CYCLE_SECONDS = 10
 local TAU = math.pi * 2
 local neutral = Color3.new(1, 1, 1)
 local function paletteColor(phase)
-    if theme == "Crimson" then
+    if theme == "Halloween" then
+        local colors={Color3.fromRGB(255,123,32),Color3.fromRGB(255,178,70),Color3.fromRGB(167,77,241)}
+        local pos=(phase%1)*#colors;local i=math.floor(pos)
+        return colors[i+1]:Lerp(colors[(i+1)%#colors+1],pos-i)
+    elseif theme == "Crimson" then
         local pulse=.5+.5*math.sin(phase*TAU)
         return Color3.fromRGB(220,18,38):Lerp(Color3.fromRGB(255,48,58),pulse)
     elseif theme == "Black / Grey / White" then
@@ -2460,6 +2248,10 @@ paintColors = function(phase)
     if theme=="Crimson" then
         dark=Color3.fromRGB(8,9,12);panelColor=Color3.fromRGB(30,32,38)
         idleTabColor=Color3.fromRGB(20,22,27);muted=Color3.fromRGB(187,191,202)
+    end
+    if theme=="Halloween" then
+        dark=Color3.fromRGB(11,7,16);panelColor=Color3.fromRGB(31,18,29)
+        idleTabColor=Color3.fromRGB(23,13,29);muted=Color3.fromRGB(190,164,181)
     end
     local a = paletteColor(phase)
     local b = paletteColor(phase + 0.25)
@@ -2508,6 +2300,26 @@ paintColors = function(phase)
         accentColor = a:Lerp(neutral, 0.40)
     end
 
+    if theme=="Halloween" then accentColor=Color3.fromRGB(255,145,55) end
+    gui:SetAttribute("Theme",theme)
+    gui:SetAttribute("AccentColor",accentColor)
+    gui:SetAttribute("PanelColor",panelColor)
+    gui:SetAttribute("SecondaryColor",theme=="Halloween" and Color3.fromRGB(165,74,228) or b)
+    for _,mark in ipairs(themeMarks) do
+        mark.plate.BackgroundColor3=dark
+        mark.edge.Color=sequence
+        mark.ink.Color=ColorSequence.new(white,accentColor)
+        mark.mark.Font=theme=="Halloween" and Enum.Font.GrenzeGotisch or Enum.Font.GothamBlack
+        mark.pumpkin.Visible=theme=="Halloween"
+        mark.stem.BackgroundColor3=accentColor
+        for _,lobe in ipairs(mark.lobes) do lobe.BackgroundColor3=accentColor end
+    end
+    for i,glow in ipairs(design.inward) do
+        glow.BackgroundColor3=i%2==0 and b or accentColor
+        glow.BackgroundTransparency=.89+(animatedColors and math.sin(phase*TAU+i)*.025 or 0)
+    end
+    hubTitle.Font=theme=="Halloween" and Enum.Font.GrenzeGotisch or Enum.Font.GothamBold
+    hubTitle.TextColor3=theme=="Halloween" and Color3.fromRGB(255,218,173) or white
     window.BackgroundColor3 = dark:Lerp(b, 0.018)
     sidebar.BackgroundColor3 = theme=="Crimson" and Color3.fromRGB(16,17,21) or dark:Lerp(c,0.04)
 
@@ -2626,13 +2438,37 @@ end
 local launcherScale=make("UIScale",launcher,{Scale=1})
 local transitionShield=make("TextButton",window,{Name="TransitionShield",Size=UDim2.fromScale(1,1),
     BackgroundTransparency=1,Text="",Visible=false,Active=true,AutoButtonColor=false,ZIndex=90})
+-- A short local bloom. No Lighting effects or scene-wide flash is used.
+local function neonFlash(target)
+    local position=target.AbsolutePosition-surface.AbsolutePosition
+    local size=target.AbsoluteSize
+    local fx=make("CanvasGroup",surface,{Name="ThemeFlash",Position=UDim2.fromOffset(position.X-14,position.Y-14),
+        Size=UDim2.fromOffset(size.X+28,size.Y+28),BackgroundTransparency=1,ZIndex=80,GroupTransparency=0})
+    local hot=accentColor
+    for i=1,3 do
+        local ring=make("Frame",fx,{Position=UDim2.fromOffset(14-i*2,14-i*2),
+            Size=UDim2.new(1,-28+i*4,1,-28+i*4),BackgroundTransparency=1})
+        round(ring,16+i*2)
+        local edge=make("UIStroke",ring,{Thickness=i==1 and 2 or 5,Transparency=i==1 and .06 or .8,Color=white})
+        make("UIGradient",edge,{Rotation=20,Color=ColorSequence.new(hot,hot:Lerp(white,.6))})
+        TweenService:Create(ring,TweenInfo.new(.58,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),{
+            Position=UDim2.fromOffset(3-i*2,3-i*2),Size=UDim2.new(1,-6+i*4,1,-6+i*4)}):Play()
+    end
+    local ray=make("Frame",fx,{Position=UDim2.new(.12,0,0,13),Size=UDim2.new(.76,0,0,3),
+        BackgroundColor3=hot:Lerp(white,.55),BorderSizePixel=0})
+    make("UIGradient",ray,{Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),
+        NumberSequenceKeypoint.new(.5,0),NumberSequenceKeypoint.new(1,1)})})
+    TweenService:Create(fx,TweenInfo.new(.6,Enum.EasingStyle.Sine,Enum.EasingDirection.In),{GroupTransparency=1}):Play()
+    task.delay(.62,function() if fx.Parent then fx:Destroy() end end)
+end
 local function toggleMinimize()
     if windowAnimating or destroyed then return end
     closeThemes()
+    neonFlash(minimized and launcher or window)
     windowAnimating=true
     transitionShield.Visible=true
     local home=window.Position
-    local duration=.28
+    local duration=.38
     local easing=TweenInfo.new(duration,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut)
     local closing=not minimized
     if closing and not launcherPlaced then
@@ -2762,7 +2598,28 @@ end)
 connect(minimize.Activated, toggleMinimize)
 
 connect(close.Activated, function()
-    gui:Destroy()
+    if destroyed or windowAnimating then return end
+    closeThemes();windowAnimating=true;transitionShield.Visible=true
+    neonFlash(window)
+    local opacity={}
+    for _,object in ipairs(window:GetDescendants()) do
+        local properties={}
+        if object:IsA("GuiObject") then properties[#properties+1]="BackgroundTransparency" end
+        if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+            properties[#properties+1]="TextTransparency"
+        elseif object:IsA("ImageLabel") or object:IsA("ImageButton") then properties[#properties+1]="ImageTransparency"
+        elseif object:IsA("UIStroke") then properties[#properties+1]="Transparency" end
+        for _,property in ipairs(properties) do opacity[#opacity+1]={object,property,object[property]} end
+    end
+    opacity[#opacity+1]={window,"BackgroundTransparency",window.BackgroundTransparency}
+    local fade=make("NumberValue",window,{Value=0})
+    connect(fade.Changed,function(value)
+        for _,entry in ipairs(opacity) do
+            if entry[1].Parent then entry[1][entry[2]]=entry[3]+(1-entry[3])*value end
+        end
+    end)
+    TweenService:Create(fade,TweenInfo.new(.48,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Value=1}):Play()
+    task.delay(.62,function() if gui.Parent then gui:Destroy() end end)
 end)
 
 connect(surface:GetPropertyChangedSignal("AbsoluteSize"), function()
@@ -2940,9 +2797,10 @@ do
         ScaleType=Enum.ScaleType.Fit,
     })
     round(toastLogo,9)
+    themeLogo(toastLogo)
     label(toast,"Welcome",UDim2.fromOffset(58,6),UDim2.fromOffset(220,18),14,white)
     local brand=label(toast,"HZREYZN HUB",UDim2.fromOffset(58,24),UDim2.fromOffset(220,14),10,accentColor)
-    local message=label(toast,"¡HzReyzn Hub Loaded without errors!",UDim2.fromOffset(58,39),
+    local message=label(toast,"Halloween update · Ready",UDim2.fromOffset(58,39),
         UDim2.fromOffset(250,15),10,white)
     message.TextWrapped=true
     local timerTrack=make("Frame",toast,{Position=UDim2.fromOffset(10,60),Size=UDim2.new(1,-20,0,3),

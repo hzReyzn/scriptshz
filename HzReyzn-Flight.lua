@@ -1,3 +1,7 @@
+-- Halloween compatibility patch: managed lifecycle, R6 fallback, respawn intent.
+local options = ...
+options = type(options)=="table" and options or {}
+if options.Owner and not options.Owner.Parent then return nil end
 -- HzReyzn Flight | Super Aura Blur (R15), bundle 19953018242407.
 -- Vertical flight: Super Saiyan Goku DBZ, bundle 2544001591229.
 -- Catalog package IDs verified via Roblox bundle-details API.
@@ -21,6 +25,8 @@ if old then old:Destroy() end
 local connections, characterConnections = {}, {}
 local dead, flying, minimized = false, false, false
 local speed = 50
+local wantedFlight = false
+local startFlight
 local loadingFinished=false
 local gfx = true
 local wakePart, wakeBeams, wakeClock = nil, {}, 0
@@ -60,117 +66,113 @@ local function tween(o,props,time)
     local t=TweenService:Create(o,TweenInfo.new(time or 0.18,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),props)
     t:Play();return t
 end
--- Shared NoFallDamage: user's Heartbeat -> RenderStepped method, with ON/OFF cleanup.
+-- Shared NoFallDamage v4. One owner-counted controller for Hub and Fly.
+-- No yielding inside physics callbacks, no saved velocity written to a new body.
+-- Masks only downward velocity between physics steps, preserving normal fall motion.
+-- Client-side behavior is game-dependent; this does not override server damage.
 local function acquireNoFall(owner)
-    local pid=game.PlaceId
-    if pid~=189707 then
-        print("Error not found natural disasters survival game!")
-        return
-    end
-    local service=playerGui:FindFirstChild("HzReyzn_NoFallDamage_v3")
+    if game.PlaceId ~= 189707 or not owner or not owner.Parent then return nil end
+    local service = playerGui:FindFirstChild("HzReyzn_NoFallDamage_v4")
     if not service then
-        service=Instance.new("Folder")
-        service.Name="HzReyzn_NoFallDamage_v3"
-        local rs=game:GetService("RunService")
-        local hb,rsd=rs.Heartbeat,rs.RenderStepped
-        local lp=game:GetService("Players").LocalPlayer
-        local z=Vector3.zero
-        local pending,closed=nil,false
-        local heartbeatConnection,boundCharacter
-        local generation=0
-        local links={}
-        local function restore(sample)
-            if not sample or pending~=sample then return end
-            pending=nil
-            if sample.root.Parent then sample.root.AssemblyLinearVelocity=sample.velocity end
-        end
-        local function unbind()
-            if heartbeatConnection then heartbeatConnection:Disconnect();heartbeatConnection=nil end
-            restore(pending)
-        end
+        service = Instance.new("Folder")
+        service.Name = "HzReyzn_NoFallDamage_v4"
+        local closed, pending = false, nil
+        local links, leaseLinks = {}, {}
         local function hasOwners()
-            for _,child in ipairs(service:GetChildren()) do
-                if child:IsA("ObjectValue") and child.Value and child.Value.Parent then return true end
+            for _, lease in ipairs(service:GetChildren()) do
+                if lease:IsA("ObjectValue") and lease.Value and lease.Value.Parent then return true end
             end
             return false
         end
-        local function stop()
-            if closed then return end
-            closed=true;generation=generation+1;unbind()
-            for _,c in ipairs(links) do c:Disconnect() end
-            table.clear(links)
+        local function unwatch(lease)
+            local link = leaseLinks[lease]
+            if link then link:Disconnect(); leaseLinks[lease] = nil end
         end
-        local function listen(signal,callback)
-            links[#links+1]=signal:Connect(callback)
-        end
-        local function f(c)
-            generation=generation+1
-            local token=generation
-            unbind();boundCharacter=c
-            if not c then return end
-            task.spawn(function()
-                local r=c:WaitForChild("HumanoidRootPart",10)
-                if closed or token~=generation or c~=lp.Character or not r or not r.Parent then return end
-                local con
-                con=hb:Connect(function()
-                    if closed or token~=generation or c~=lp.Character or not r.Parent then
-                        con:Disconnect()
-                        if heartbeatConnection==con then heartbeatConnection=nil end
-                        if pending and pending.root==r then restore(pending) end
-                        return
-                    end
-                    if not hasOwners() then service:Destroy();return end
-                    -- One in-flight sample prevents overlapping Heartbeats from saving zero.
-                    if pending then return end
-                    local v=r.AssemblyLinearVelocity
-                    local sample={root=r,velocity=v}
-                    pending=sample
-                    r.AssemblyLinearVelocity=z
-                    rsd:Wait()
-                    restore(sample)
-                end)
-                heartbeatConnection=con
+        local function watch(lease)
+            if not lease:IsA("ObjectValue") or not lease.Value or leaseLinks[lease] then return end
+            leaseLinks[lease] = lease.Value.Destroying:Connect(function()
+                if lease.Parent then lease:Destroy() end
             end)
         end
-        listen(service.Destroying,stop)
-        listen(service.ChildRemoved,function()
+        local function restore()
+            local sample=pending;pending=nil
+            if not sample then return end
+            local r,h,c=sample.root,sample.humanoid,sample.character
+            if player.Character~=c or c:FindFirstChild("HumanoidRootPart")~=r
+                or not r.Parent or h.Health<=0 or h.PlatformStand or h.SeatPart or r.Anchored then return end
+            local flight=r:FindFirstChild("HZFlightVelocity")
+            if flight and flight.Enabled then return end
+            local current=r.AssemblyLinearVelocity
+            -- Restore only our unchanged sentinel. A jump, a mover or another controller wins.
+            if current.Y==0 and h.FloorMaterial==Enum.Material.Air then
+                r.AssemblyLinearVelocity=Vector3.new(current.X,sample.y,current.Z)
+            end
+        end
+        local function stop()
+            if closed then return end
+            closed = true
+            restore()
+            for _, link in ipairs(links) do link:Disconnect() end
+            for lease in pairs(leaseLinks) do unwatch(lease) end
+            table.clear(links)
+        end
+        links[#links + 1] = service.Destroying:Connect(stop)
+        links[#links + 1] = service.ChildAdded:Connect(watch)
+        links[#links + 1] = service.ChildRemoved:Connect(function(lease)
+            unwatch(lease)
             if not closed and service.Parent and not hasOwners() then service:Destroy() end
         end)
-        listen(lp.CharacterAdded,f)
-        listen(lp.CharacterRemoving,function(c) if c==boundCharacter then f(nil) end end)
-        service.Parent=playerGui
-        -- Upgrade an already running Hub/Fly without leaving the previous sampler alive.
-        local previous=playerGui:FindFirstChild("HzReyzn_NoFallDamage_v2")
-        if previous then
-            for _,lease in ipairs(previous:GetChildren()) do
-                if lease:IsA("ObjectValue") and lease.Value and lease.Value.Parent then lease.Parent=service end
+        local function step()
+            if closed then return end
+            if not hasOwners() then service:Destroy(); return end
+            -- Resolve the current body every step: covers late roots, respawns and replacements.
+            local character = player.Character
+            local h = character and character:FindFirstChildOfClass("Humanoid")
+            local r = character and character:FindFirstChild("HumanoidRootPart")
+            if not h or not r or not r.Parent or h.Health <= 0 or r.Anchored
+                or h.SeatPart or h.PlatformStand or h.Sit then return end
+            local flight = r:FindFirstChild("HZFlightVelocity")
+            if flight and flight.Enabled then return end
+            local state = h:GetState()
+            if state ~= Enum.HumanoidStateType.Freefall and state ~= Enum.HumanoidStateType.Jumping then return end
+            local velocity = r.AssemblyLinearVelocity
+            -- The next PreSimulation restores this Y before physics advances.
+            -- No RenderStepped:Wait(), overlapping samples or horizontal velocity reset.
+            if velocity.Y < -4 and not pending then
+                pending={root=r,humanoid=h,character=character,y=velocity.Y}
+                r.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
             end
-            previous:Destroy()
         end
-        f(lp.Character)
+        service.Parent = playerGui
+        -- Retire old samplers before they can restore a stale velocity. Preserve their live leases.
+        for _, name in ipairs({"HzReyzn_NoFallDamage_v2", "HzReyzn_NoFallDamage_v3"}) do
+            local previous = playerGui:FindFirstChild(name)
+            if previous then
+                for _, lease in ipairs(previous:GetChildren()) do
+                    if lease:IsA("ObjectValue") and lease.Value and lease.Value.Parent then
+                        lease.Parent = service; watch(lease)
+                    end
+                end
+                previous:Destroy()
+            end
+        end
+        links[#links + 1] = RunService.PreSimulation:Connect(restore)
+        links[#links + 1] = RunService.PostSimulation:Connect(step)
     end
-    local lease=Instance.new("ObjectValue")
-    lease.Name=owner.Name;lease.Value=owner;lease.Parent=service
-    local released,ownerConnection=false,nil
-    local function release()
+    local lease = Instance.new("ObjectValue")
+    lease.Name = owner.Name; lease.Value = owner; lease.Parent = service
+    local released = false
+    return function()
         if released then return end
-        released=true
-        if ownerConnection then ownerConnection:Disconnect() end
-        lease:Destroy()
-        if not service.Parent then return end
-        for _,child in ipairs(service:GetChildren()) do
-            if child:IsA("ObjectValue") and child.Value and child.Value.Parent then return end
-        end
-        service:Destroy()
+        released = true
+        if lease.Parent then lease:Destroy() end
     end
-    ownerConnection=owner.Destroying:Connect(release)
-    return release
 end
 -- End shared NoFallDamage.
 
-local gui=make("ScreenGui",playerGui,{Name="HZFlightStandalone",ResetOnSpawn=false,DisplayOrder=65,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
+local gui=make("ScreenGui",playerGui,{Name="HZFlightStandalone",IgnoreGuiInset=true,ResetOnSpawn=false,DisplayOrder=65,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
 local releaseNoFall=acquireNoFall(gui)
-local panel=make("CanvasGroup",gui,{Visible=false,GroupTransparency=1,Position=UDim2.new(0.5,-125,0.32,0),Size=UDim2.fromOffset(250,179),BackgroundColor3=Color3.fromRGB(8,14,35),BorderSizePixel=0,ClipsDescendants=true})
+local panel=make("CanvasGroup",gui,{Name="FlightPanel",Visible=false,GroupTransparency=1,Position=UDim2.new(0.5,-125,0.32,0),Size=UDim2.fromOffset(250,195),BackgroundColor3=Color3.fromRGB(8,14,35),BorderSizePixel=0,ClipsDescendants=true})
 corner(panel,14)
 make("UIGradient",panel,{Color=ColorSequence.new(Color3.fromRGB(175,204,255),Color3.fromRGB(76,94,153)),Rotation=55})
 local topAccent=make("Frame",panel,{Position=UDim2.fromOffset(18,0),Size=UDim2.new(1,-36,0,2),BackgroundColor3=accent,BorderSizePixel=0})
@@ -191,15 +193,18 @@ local function button(parent,text,x,y,w,h)
 end
 local mini=button(panel,"−",178,6,28,27)
 local close=button(panel,"×",213,6,28,27)
-local body=make("Frame",panel,{Position=UDim2.fromOffset(0,39),Size=UDim2.fromOffset(250,140),BackgroundTransparency=1})
+local body=make("Frame",panel,{Position=UDim2.fromOffset(0,39),Size=UDim2.fromOffset(250,156),BackgroundTransparency=1})
 local toggle=button(body,"ON",10,0,230,36)
+toggle.Name="FlightToggle"
 local minus=button(body,"−",10,43,35,30)
 local speedBox=make("TextBox",body,{Position=UDim2.fromOffset(50,43),Size=UDim2.fromOffset(150,30),Text="50",ClearTextOnFocus=false,Font=Enum.Font.GothamBold,TextSize=14,TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(11,24,57),BorderSizePixel=0})
 corner(speedBox,8)
 local plus=button(body,"+",205,43,35,30)
 local gfxButton=button(body,"VFX ON",10,82,230,30)
-local status=make("TextLabel",body,{Visible=false,BackgroundTransparency=1,Text="Loading"})
-make("TextLabel",body,{Position=UDim2.fromOffset(10,118),Size=UDim2.fromOffset(230,16),BackgroundTransparency=1,Text="Made By hzReyzn",TextSize=10,TextColor3=Color3.fromRGB(153,188,205),Font=Enum.Font.Gotham})
+local status=make("TextLabel",body,{Name="FlightStatus",Position=UDim2.fromOffset(10,114),
+    Size=UDim2.fromOffset(230,16),BackgroundTransparency=1,Text="Loading",TextSize=10,
+    Font=Enum.Font.Gotham,TextColor3=Color3.fromRGB(196,199,215)})
+make("TextLabel",body,{Position=UDim2.fromOffset(10,134),Size=UDim2.fromOffset(230,16),BackgroundTransparency=1,Text="Made By hzReyzn",TextSize=10,TextColor3=Color3.fromRGB(153,188,205),Font=Enum.Font.Gotham})
 local loader=make("CanvasGroup",gui,{
     AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.42),
     Size=UDim2.fromOffset(278,112),BackgroundColor3=Color3.fromRGB(8,14,35),
@@ -224,6 +229,10 @@ local loadStarted=os.clock()
 local shimmerConnection=connect(RunService.RenderStepped,function()
     if loader.Parent then shimmer.Offset=Vector2.new(((os.clock()-loadStarted)*0.8)%2-1,0) end
 end)
+if options.Owner then
+    shimmerConnection:Disconnect();loader:Destroy();loadingFinished=true
+    panel.Visible=true;panel.GroupTransparency=0
+else
 tween(loader,{GroupTransparency=0,Position=UDim2.fromScale(0.5,0.46)},0.4)
 tween(fill,{Size=UDim2.fromScale(1,1)},3.9)
 task.delay(3.9,function()
@@ -235,6 +244,7 @@ task.delay(3.9,function()
         panel.Visible=true;tween(panel,{GroupTransparency=0},0.3)
     end)
 end)
+end
 local drag,dragStart,startPos
 connect(header.InputBegan,function(i)
     if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then drag=i;dragStart=i.Position;startPos=panel.Position end
@@ -250,7 +260,7 @@ local resizeTween
 connect(mini.Activated,function()
     minimized=not minimized;mini.Text=minimized and "+" or "−"
     if resizeTween then resizeTween:Cancel() end
-    resizeTween=tween(panel,{Size=UDim2.fromOffset(250,minimized and 39 or 179)},0.25)
+    resizeTween=tween(panel,{Size=UDim2.fromOffset(250,minimized and 39 or 195)},0.25)
 end)
 local function setSpeed(n)
     if not n or n~=n or math.abs(n)==math.huge then n=speed end
@@ -259,12 +269,37 @@ end
 connect(minus.Activated,function() setSpeed(speed-10) end)
 connect(plus.Activated,function() setSpeed(speed+10) end)
 connect(speedBox.FocusLost,function() setSpeed(tonumber(speedBox.Text)) end)
+local secondary=Color3.fromRGB(116,184,255)
 local function paint()
-    border.Color=accent;header.TextColor3=accent
-    toggle.BackgroundColor3=flying and accent:Lerp(Color3.new(0,0,0),0.45) or Color3.fromRGB(20,38,83)
-    for _,e in ipairs(emitters) do e.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(233,248,255)),ColorSequenceKeypoint.new(0.3,Color3.fromRGB(116,184,255)),ColorSequenceKeypoint.new(1,accent)}) end
-    for _,t in ipairs(trails) do t.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(233,248,255)),ColorSequenceKeypoint.new(0.3,Color3.fromRGB(116,184,255)),ColorSequenceKeypoint.new(1,accent)}) end
+    local source=options.ThemeSource
+    if source and source.Parent then
+        accent=source:GetAttribute("AccentColor") or accent
+        secondary=source:GetAttribute("SecondaryColor") or secondary
+        panel.BackgroundColor3=source:GetAttribute("PanelColor") or panel.BackgroundColor3
+    end
+    border.Color=accent;header.TextColor3=accent;topAccent.BackgroundColor3=accent
+    local black=Color3.new(0,0,0)
+    speedBox.BackgroundColor3=black:Lerp(accent,.1)
+    for _,b in ipairs(buttons) do
+        b.BackgroundColor3=black:Lerp(accent,.19)
+        local stroke=b:FindFirstChildOfClass("UIStroke")
+        if stroke then stroke.Color=accent end
+    end
+    toggle.BackgroundColor3=black:Lerp(accent,flying and .55 or .19)
+    local colors=ColorSequence.new({ColorSequenceKeypoint.new(0,accent:Lerp(Color3.new(1,1,1),.85)),
+        ColorSequenceKeypoint.new(.3,secondary),ColorSequenceKeypoint.new(1,accent)})
+    for _,e in ipairs(emitters) do e.Color=colors end
+    for _,t in ipairs(trails) do t.Color=colors end
+    for _,beam in ipairs(wakeBeams) do beam.Color=colors end
+    if auraLight then auraLight.Color=accent end
+    if takeoffPulse then takeoffPulse.Color=accent end
 end
+if options.ThemeSource then
+    connect(options.ThemeSource:GetAttributeChangedSignal("AccentColor"),paint)
+    connect(options.ThemeSource:GetAttributeChangedSignal("SecondaryColor"),paint)
+    connect(options.ThemeSource:GetAttributeChangedSignal("Theme"),paint)
+end
+paint()
 connect(gfxButton.Activated,function()
     gfx=not gfx;gfxButton.Text=gfx and "VFX ON" or "VFX OFF"
     if not gfx then
@@ -328,12 +363,19 @@ local function loadTracks(token,h,sourceAnimator)
         if not dead and token==generation then animationError=message;animationsReady=false;status.Text=message end
         return false
     end
-    if h.RigType~=Enum.HumanoidRigType.R15 then return fail("Super Aura Blur requires R15") end
+    local r6=h.RigType==Enum.HumanoidRigType.R6
     if not sourceAnimator then return fail("Character Animator missing") end
     for _,group in ipairs({"Idle","Walk","Run","Jump","Fall","Climb","Descend"}) do
         if not current() then discard();return false end
         status.Text="Loading Aura: "..group
-        local id,err=resolvePackage(group,AuraPackages[group])
+        local id,err
+        if r6 then
+            local animate=character:FindFirstChild("Animate")
+            local folder=animate and animate:FindFirstChild(group=="Descend" and "fall" or group:lower())
+            local animation=folder and folder:FindFirstChildWhichIsA("Animation",true)
+            id=animation and animation.AnimationId
+            err="R6 flight ready · native animations unavailable"
+        else id,err=resolvePackage(group,AuraPackages[group]) end
         if not current() then discard();return false end
         if not id then return fail(err) end
         local a=Instance.new("Animation");a.AnimationId=id
@@ -453,10 +495,11 @@ local function releaseMovers()
 end
 local function endFlight(withFall)
     if not flying then return end
-    flying=false;releaseMovers();smoothedVelocity=Vector3.zero
+    flying=false;gui:SetAttribute("FlightActive",false);releaseMovers();smoothedVelocity=Vector3.zero
     if humanoid and humanoid.Parent then
-        humanoid.AutoRotate=oldAuto;humanoid.PlatformStand=oldStand
-        if humanoid.Health>0 and not oldStand then humanoid:ChangeState(Enum.HumanoidStateType.Freefall) end
+        if humanoid.AutoRotate==false then humanoid.AutoRotate=oldAuto end
+        if humanoid.PlatformStand==true then humanoid.PlatformStand=oldStand end
+        if humanoid.Health>0 and not humanoid.PlatformStand then humanoid:ChangeState(Enum.HumanoidStateType.Freefall) end
     end
     toggle.Text="ON";paint()
     if withFall and humanoid and humanoid.Health>0 then fallAt=os.clock();state="Fall";play("Fall") else fallAt=nil;state="Ready";stopTracks() end
@@ -497,16 +540,19 @@ local function bind(model)
             if not current() then return end
             generation=generation+1;resetCharacter();status.Text="Waiting for respawn";toggle.Text="..."
         end,characterConnections)
-        makeEffects()
+        local effectsOK,effectsError=pcall(makeEffects)
+        if not effectsOK then warn("[HzReyzn Fly] Optional VFX: "..tostring(effectsError)) end
         toggle.Text="ON";status.Text="Ready";paint()
+        if wantedFlight and loadingFinished then startFlight() end
         -- The replicated Animator can arrive after CharacterAdded. Never create a local replacement.
         local attempts=0
-        while current() and h.Health>0 and attempts<3 do
+        local animatorDeadline=os.clock()+15
+        while current() and h.Health>0 and attempts<3 and os.clock()<animatorDeadline do
             local candidate=h:FindFirstChildOfClass("Animator")
             if candidate then
                 animator=candidate;attempts=attempts+1
                 if loadTracks(token,h,candidate) then
-                    if current() then status.Text="Super Aura Blur · ready" end
+                    if current() then status.Text=h.RigType==Enum.HumanoidRigType.R6 and "R6 · ready" or "Super Aura Blur · ready" end
                     return
                 end
                 if not current() then return end
@@ -517,7 +563,7 @@ local function bind(model)
         if current() and animationError then warn("HzReyzn Fly animations: "..animationError) end
     end)
 end
-local function startFlight()
+startFlight=function()
     if dead or not loadingFinished or flying or not humanoid or not root or not root.Parent or humanoid.Health<=0 then return end
     if humanoid.SeatPart or root.Anchored then status.Text="Stand up to fly";return end
     fallAt=nil;takeoffAt=os.clock();oldAuto=humanoid.AutoRotate;oldStand=humanoid.PlatformStand
@@ -531,13 +577,21 @@ local function startFlight()
         releaseMovers();humanoid.AutoRotate=oldAuto;humanoid.PlatformStand=oldStand
         status.Text="Try flight again";warn("HzReyzn Fly: "..tostring(err));return
     end
-    flying=true;pulseAt=gfx and os.clock() or nil
+    flying=true;gui:SetAttribute("FlightActive",true);pulseAt=gfx and os.clock() or nil
     if takeoffPulse then takeoffPulse.CFrame=root.CFrame;takeoffPulse.Transparency=1 end
     smoothedVelocity=Vector3.new(0,12,0);state="Takeoff";play(state)
     toggle.Text="OFF";paint()
     if gfx then for i,e in ipairs(emitters) do e:Emit(i==1 and 12 or 4) end end
 end
-local function toggleFlight() if flying then endFlight(true) else startFlight() end end
+local function toggleFlight()
+    if flying or wantedFlight then
+        wantedFlight=false;endFlight(true);toggle.Text="ON"
+    else
+        if not loadingFinished then return end
+        wantedFlight=true;startFlight()
+        if not flying and humanoid and humanoid.Health>0 then wantedFlight=false end
+    end
+end
 connect(toggle.Activated,toggleFlight)
 connect(UIS.InputBegan,function(i,processed) if not processed and not UIS:GetFocusedTextBox() and i.KeyCode==Enum.KeyCode.F then toggleFlight() end end)
 connect(player.CharacterAdded,bind)
@@ -547,7 +601,14 @@ connect(player.CharacterRemoving,function(model)
 end)
 local uiClock=0
 connect(RunService.PreSimulation,function(dt)
-    if dead or not root or not root.Parent or not humanoid then return end
+    if dead then return end
+    if character and (character~=player.Character
+        or character:FindFirstChild("HumanoidRootPart")~=root
+        or character:FindFirstChildOfClass("Humanoid")~=humanoid) then
+        if player.Character then bind(player.Character) else generation=generation+1;resetCharacter() end
+        return
+    end
+    if not root or not root.Parent or not humanoid then return end
     clock=clock+dt
     local now=os.clock()
     if flying then
@@ -602,8 +663,24 @@ connect(RunService.PreSimulation,function(dt)
 end)
 connect(gui.Destroying,function()
     if dead then return end
-    dead=true;if releaseNoFall then releaseNoFall() end;generation=generation+1;resetCharacter()
+    dead=true;wantedFlight=false;if releaseNoFall then releaseNoFall() end;generation=generation+1;resetCharacter()
     for _,c in ipairs(connections) do c:Disconnect() end
 end)
 connect(close.Activated,function() gui:Destroy() end)
 if player.Character then bind(player.Character) end
+
+if options.Owner then
+    connect(options.Owner.Destroying,function() if gui.Parent then gui:Destroy() end end)
+    if not options.Owner.Parent then gui:Destroy();return nil end
+end
+return {
+    Gui=gui,
+    Focus=function()
+        if dead then return end
+        gui.Enabled=true;minimized=false;mini.Text="−"
+        if resizeTween then resizeTween:Cancel() end
+        panel.Size=UDim2.fromOffset(250,195)
+        if loadingFinished then panel.Visible=true;panel.GroupTransparency=0 end
+    end,
+    Destroy=function() if gui.Parent then gui:Destroy() end end,
+}
