@@ -5,54 +5,228 @@
 local HZ_MAINTENANCE = true
 if HZ_MAINTENANCE then
     local playerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    local TweenService = game:GetService("TweenService")
     for _, name in ipairs({"HzReyznInterface", "HzReyznHalloweenLoading", "HzReyznMaintenance", "HZAntiflingTest", "HZWaterWalkTest"}) do
         local previous = playerGui:FindFirstChild(name)
         if previous then previous:Destroy() end
     end
     local function make(class, parent, properties)
         local object = Instance.new(class)
+        if class == "TextLabel" or class == "TextButton" then object.AutoLocalize = false end
         for key, value in pairs(properties) do object[key] = value end
         object.Parent = parent
         return object
     end
+    local function round(object, radius)
+        make("UICorner", object, {CornerRadius = UDim.new(0, radius)})
+    end
+    local copy = {
+        en = {name = "English", status = "SERVER MAINTENANCE", title = "We'll be back soon.",
+            message = "The server is currently under maintenance.\nThank you for your patience.", language = "DISPLAY LANGUAGE", close = "Close"},
+        es = {name = "Español", status = "SERVIDOR EN MANTENIMIENTO", title = "Regresaremos pronto.",
+            message = "El servidor está en mantenimiento.\nGracias por tu paciencia.", language = "IDIOMA", close = "Cerrar"},
+        pt = {name = "Português", status = "SERVIDOR EM MANUTENÇÃO", title = "Voltaremos em breve.",
+            message = "O servidor está em manutenção.\nObrigado pela sua paciência.", language = "IDIOMA", close = "Fechar"},
+        ru = {name = "Русский", status = "ТЕХНИЧЕСКОЕ ОБСЛУЖИВАНИЕ", title = "Скоро вернёмся.",
+            message = "На сервере проводятся технические работы.\nСпасибо за терпение.", language = "ЯЗЫК ИНТЕРФЕЙСА", close = "Закрыть"},
+    }
+    local order = {"en", "es", "pt", "ru"}
+    local palette = {
+        accent = Color3.fromRGB(255, 153, 78), gold = Color3.fromRGB(255, 207, 134),
+        white = Color3.fromRGB(248, 242, 236), muted = Color3.fromRGB(178, 173, 189),
+        idle = Color3.fromRGB(30, 27, 36), selected = Color3.fromRGB(69, 41, 30),
+    }
     local screen = make("ScreenGui", playerGui, {
         Name = "HzReyznMaintenance", ResetOnSpawn = false, IgnoreGuiInset = true,
         DisplayOrder = 100001, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     })
-    make("Frame", screen, {
-        Name = "Shade", Size = UDim2.fromScale(1, 1), BorderSizePixel = 0,
-        BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = .45,
+    local alive, closing = true, false
+    local links, tweens = {}, {}
+    local function connect(signal, callback)
+        local link = signal:Connect(callback); links[#links + 1] = link; return link
+    end
+    local function tween(key, object, duration, properties, repeats, reverses)
+        if tweens[key] then tweens[key]:Cancel() end
+        local animation = TweenService:Create(object,
+            TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, repeats or 0, reverses or false), properties)
+        tweens[key] = animation; animation:Play(); return animation
+    end
+    connect(screen.Destroying, function()
+        if not alive then return end
+        alive = false
+        for _, animation in pairs(tweens) do animation:Cancel() end
+        for _, link in ipairs(links) do link:Disconnect() end
+        table.clear(tweens); table.clear(links)
+    end)
+    local viewport = make("Frame", screen, {
+        Name = "MaintenanceViewport", Size = UDim2.fromScale(1, 1), BorderSizePixel = 0,
+        BackgroundColor3 = Color3.fromRGB(6, 5, 10), BackgroundTransparency = 1,
     })
-    local panel = make("Frame", screen, {
-        Name = "Notice", AnchorPoint = Vector2.new(.5, .5), Position = UDim2.fromScale(.5, .5),
-        Size = UDim2.new(.88, 0, 0, 240), BackgroundColor3 = Color3.fromRGB(18, 15, 20),
+    local layout = make("Frame", viewport, {
+        Name = "CardLayout", AnchorPoint = Vector2.new(.5, .5), Position = UDim2.fromScale(.5, .5),
+        Size = UDim2.fromOffset(540, 416), BackgroundTransparency = 1,
+    })
+    local fit = make("UIScale", layout, {Name = "FitScale", Scale = 1})
+    local motion = make("Frame", layout, {
+        Name = "Motion", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(.5, .5), Position = UDim2.new(.5, 0, .5, 12),
+    })
+    local entrance = make("UIScale", motion, {Name = "EntranceScale", Scale = .97})
+    local glow = make("Frame", motion, {
+        Name = "NeonHalo", Size = UDim2.new(1, 6, 1, 6), Position = UDim2.fromOffset(-3, -3),
+        BackgroundTransparency = 1, ZIndex = 1,
+    })
+    round(glow, 25)
+    local halo = make("UIStroke", glow, {Thickness = 8, Color = palette.accent, Transparency = 1})
+    local panel = make("Frame", motion, {
+        Name = "Notice", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(1, 1, 1),
         BorderSizePixel = 0, ZIndex = 2,
     })
-    make("UISizeConstraint", panel, {MaxSize = Vector2.new(440, 240)})
-    make("UICorner", panel, {CornerRadius = UDim.new(0, 18)})
-    local edge = make("UIStroke", panel, {Color = Color3.new(1, 1, 1), Thickness = 1.5, Transparency = .2})
-    make("UIGradient", edge, {
-        Rotation = 25, Color = ColorSequence.new(Color3.fromRGB(255, 103, 32), Color3.fromRGB(255, 193, 87)),
+    round(panel, 22)
+    make("UIGradient", panel, {Rotation = 110, Color = ColorSequence.new(Color3.fromRGB(26, 22, 32), Color3.fromRGB(14, 14, 21))})
+    local edge = make("UIStroke", panel, {Color = Color3.new(1, 1, 1), Thickness = 1.2, Transparency = .26})
+    local rim = make("UIGradient", edge, {Rotation = 20, Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, palette.gold), ColorSequenceKeypoint.new(.4, Color3.fromRGB(92, 66, 63)),
+        ColorSequenceKeypoint.new(.7, Color3.fromRGB(58, 49, 63)), ColorSequenceKeypoint.new(1, palette.accent),
+    })})
+    local inner = make("Frame", panel, {
+        Name = "InnerLight", Size = UDim2.new(1, 0, 0, 140), BorderSizePixel = 0,
+        BackgroundColor3 = palette.accent, BackgroundTransparency = .93, ZIndex = 1,
     })
-    local function text(name, message, y, height, size, color)
+    round(inner, 22)
+    make("UIGradient", inner, {Rotation = 90, Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, .15), NumberSequenceKeypoint.new(1, 1),
+    })})
+    local monogram = make("TextLabel", panel, {
+        Name = "Monogram", Text = "HZ", Position = UDim2.fromOffset(28, 24), Size = UDim2.fromOffset(44, 44),
+        BackgroundColor3 = Color3.fromRGB(67, 39, 30), BorderSizePixel = 0, TextColor3 = palette.gold,
+        Font = Enum.Font.GothamBold, TextSize = 20, ZIndex = 3,
+    })
+    round(monogram, 13)
+    make("UIStroke", monogram, {ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = palette.accent, Transparency = .65, Thickness = 1})
+    local function text(name, message, x, y, width, height, size, color, font)
         return make("TextLabel", panel, {
-            Name = name, Text = message, Position = UDim2.new(0, 24, 0, y),
-            Size = UDim2.new(1, -48, 0, height), BackgroundTransparency = 1,
-            Font = Enum.Font.GothamMedium, TextSize = size, TextColor3 = color,
-            TextWrapped = true, ZIndex = 3,
+            Name = name, Text = message, Position = UDim2.fromOffset(x, y), Size = UDim2.new(1, -width, 0, height),
+            BackgroundTransparency = 1, Font = font or Enum.Font.GothamMedium, TextSize = size,
+            TextColor3 = color, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
         })
     end
-    text("Brand", "HzReyzn Hub", 22, 30, 22, Color3.fromRGB(255, 247, 238))
-    text("Status", "EN MANTENIMIENTO", 62, 22, 13, Color3.fromRGB(255, 151, 65))
-    text("Message", "El script está en mantenimiento.\nRegresará pronto.", 96, 60, 17, Color3.fromRGB(218, 214, 225))
+    text("Brand", "HzReyzn Hub", 86, 30, 128, 32, 21, palette.white, Enum.Font.GothamBold)
+    make("Frame", panel, {Name = "HeaderRule", Position = UDim2.fromOffset(28, 88), Size = UDim2.new(1, -56, 0, 1),
+        BackgroundColor3 = palette.white, BackgroundTransparency = .93, BorderSizePixel = 0, ZIndex = 2})
+    local statusLabel = text("Status", "", 28, 106, 56, 22, 11, palette.accent)
+    local title = text("Title", "", 28, 140, 56, 36, 28, palette.white, Enum.Font.GothamBold)
+    title.TextScaled = true; title.TextWrapped = false
+    make("UITextSizeConstraint", title, {MinTextSize = 18, MaxTextSize = 28})
+    local message = text("Message", "", 28, 184, 56, 64, 15, palette.muted)
+    message.TextYAlignment = Enum.TextYAlignment.Top
+    local languageLabel = text("LanguageLabel", "", 28, 263, 56, 18, 11, palette.muted)
+    local buttons = {}
+    for _, code in ipairs(order) do
+        local button = make("TextButton", panel, {
+            Name = "Language_" .. code, Text = copy[code].name, BackgroundColor3 = palette.idle,
+            BorderSizePixel = 0, AutoButtonColor = false, Font = Enum.Font.GothamMedium,
+            TextSize = 13, TextColor3 = palette.muted, ZIndex = 3,
+        })
+        round(button, 11)
+        local stroke = make("UIStroke", button, {
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = palette.accent, Thickness = 1, Transparency = .9,
+        })
+        local mark = make("Frame", button, {
+            Name = "SelectedMark", AnchorPoint = Vector2.new(.5, 1), Position = UDim2.new(.5, 0, 1, -3),
+            Size = UDim2.fromOffset(22, 2), BackgroundColor3 = palette.accent, BorderSizePixel = 0, Visible = false, ZIndex = 4,
+        })
+        round(mark, 2)
+        buttons[code] = {button = button, stroke = stroke, mark = mark}
+    end
     local close = make("TextButton", panel, {
-        Name = "Dismiss", Text = "Cerrar", AnchorPoint = Vector2.new(.5, 0),
-        Position = UDim2.new(.5, 0, 0, 183), Size = UDim2.new(.5, 0, 0, 36),
-        BackgroundColor3 = Color3.fromRGB(66, 35, 25), TextColor3 = Color3.fromRGB(255, 191, 137),
-        BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 15, ZIndex = 3,
+        Name = "Dismiss", Text = "", Position = UDim2.fromOffset(28, 352), Size = UDim2.new(1, -56, 0, 44),
+        BackgroundColor3 = Color3.new(1, 1, 1), TextColor3 = Color3.fromRGB(35, 21, 20),
+        AutoButtonColor = false, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 15, ZIndex = 3,
     })
-    make("UICorner", close, {CornerRadius = UDim.new(0, 10)})
-    close.Activated:Connect(function() screen:Destroy() end)
+    round(close, 12)
+    make("UIGradient", close, {Rotation = 12, Color = ColorSequence.new(palette.accent, palette.gold)})
+    -- Fade native controls directly, avoiding an extra CanvasGroup texture on mobile.
+    local opacity = make("NumberValue", screen, {Name = "NoticeOpacity", Value = 0})
+    local opacityBases = {}
+    local function baseOpacity(object, property, value)
+        if not opacityBases[object] then opacityBases[object] = {} end
+        opacityBases[object][property] = value
+        object[property] = 1 - (1 - value) * opacity.Value
+    end
+    local controls = panel:GetDescendants(); table.insert(controls, panel)
+    for _, object in ipairs(controls) do
+        if object:IsA("GuiObject") then baseOpacity(object, "BackgroundTransparency", object.BackgroundTransparency) end
+        if object:IsA("TextLabel") or object:IsA("TextButton") then baseOpacity(object, "TextTransparency", object.TextTransparency) end
+        if object:IsA("UIStroke") then baseOpacity(object, "Transparency", object.Transparency) end
+    end
+    connect(opacity.Changed, function(value)
+        if not alive then return end
+        for object, properties in pairs(opacityBases) do
+            for property, base in pairs(properties) do object[property] = 1 - (1 - base) * value end
+        end
+    end)
+    local function choose(code, animate)
+        if not alive or closing or not copy[code] then return end
+        local language = copy[code]
+        screen:SetAttribute("Language", code)
+        statusLabel.Text = language.status; title.Text = language.title; message.Text = language.message
+        languageLabel.Text = language.language; close.Text = language.close
+        for _, key in ipairs(order) do
+            local item, selected = buttons[key], key == code
+            item.button:SetAttribute("Selected", selected); item.mark.Visible = selected
+            local colors = {BackgroundColor3 = selected and palette.selected or palette.idle,
+                TextColor3 = selected and palette.gold or palette.muted}
+            if animate then tween("language-" .. key, item.button, .16, colors)
+            else for property, value in pairs(colors) do item.button[property] = value end end
+            baseOpacity(item.stroke, "Transparency", selected and .3 or .9)
+        end
+    end
+    for _, code in ipairs(order) do
+        local item = buttons[code]
+        connect(item.button.Activated, function() choose(code, true) end)
+        connect(item.button.MouseEnter, function()
+            if alive and not closing then baseOpacity(item.stroke, "Transparency", .2) end
+        end)
+        connect(item.button.MouseLeave, function()
+            if alive and not closing then baseOpacity(item.stroke, "Transparency", item.button:GetAttribute("Selected") and .3 or .9) end
+        end)
+    end
+    local function resize()
+        local size = viewport.AbsoluteSize
+        if size.X <= 0 or size.Y <= 0 then return end
+        local width = math.min(540, math.max(280, size.X - 32))
+        local columns = width < 450 and 2 or 4
+        local height = columns == 2 and 466 or 416
+        layout.Size = UDim2.fromOffset(width, height)
+        fit.Scale = math.max(.05, math.min(1, (size.X - 24) / width, (size.Y - 24) / height))
+        local cell = (width - 56 - (columns - 1) * 8) / columns
+        for index, code in ipairs(order) do
+            local column, row = (index - 1) % columns, math.floor((index - 1) / columns)
+            buttons[code].button.Position = UDim2.fromOffset(28 + column * (cell + 8), 290 + row * 50)
+            buttons[code].button.Size = UDim2.fromOffset(cell, 42)
+        end
+        close.Position = UDim2.fromOffset(28, height - 64)
+    end
+    connect(viewport:GetPropertyChangedSignal("AbsoluteSize"), resize); resize()
+    -- English is the default on every execution; translation is always an explicit choice.
+    choose("en", false)
+    tween("shade", viewport, .32, {BackgroundTransparency = .38})
+    tween("reveal", opacity, .36, {Value = 1})
+    tween("position", motion, .36, {Position = UDim2.fromScale(.5, .5)})
+    tween("scale", entrance, .36, {Scale = 1})
+    tween("rim", rim, 8, {Rotation = 200}, -1, true)
+    tween("halo", halo, 3.5, {Transparency = .94}, -1, true)
+    connect(close.Activated, function()
+        if not alive or closing then return end
+        closing = true
+        for _, animation in pairs(tweens) do animation:Cancel() end
+        tween("shade", viewport, .22, {BackgroundTransparency = 1})
+        tween("reveal", opacity, .22, {Value = 0})
+        tween("scale", entrance, .22, {Scale = .97})
+        tween("halo", halo, .18, {Transparency = 1})
+        task.delay(.23, function() if alive then screen:Destroy() end end)
+    end)
     -- Closing the notice only dismisses it; no loader, Hub or modules start.
     return "maintenance"
 end

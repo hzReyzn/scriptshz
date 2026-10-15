@@ -8,13 +8,65 @@ local function runTests(source)
         local w=world();w.character()
         assert(w.run(source.maintenance)=='maintenance');w.step(90)
         local notice=find(w.pg,'HzReyznMaintenance')
-        assert(find(notice,'Message').Text=='El script está en mantenimiento.\nRegresará pronto.')
+        assert(notice:GetAttribute('Language')=='en')
+        assert(find(notice,'Status').Text=='SERVER MAINTENANCE')
+        assert(find(notice,'Message').Text=='The server is currently under maintenance.\nThank you for your patience.')
+        assert(find(notice,'Dismiss').Text=='Close')
         assert(not w.pg:FindFirstChild('HzReyznInterface') and not w.pg:FindFirstChild('HzReyznHalloweenLoading'))
         assert(not w.pg:FindFirstChild('HzReyzn_NoFallDamage_v4') and not w.pg:FindFirstChild('HZFlightStandalone'))
         assert(#w.requests==0 and #w.warnings==0)
         find(notice,'Dismiss').Activated:Fire();w.step(1800)
         assert(not notice.Parent and not w.pg:FindFirstChild('HzReyznInterface') and #w.requests==0)
         assert(w.services.RunService.Heartbeat:Count()==0 and w.services.RunService.RenderStepped:Count()==0)
+    end)
+    test('Maintenance translations update all text and keep exactly one language selected',function()
+        local w=world();w.run(source.maintenance);w.step(30)
+        local notice=find(w.pg,'HzReyznMaintenance')
+        local expected={
+            es={'SERVIDOR EN MANTENIMIENTO','Regresaremos pronto.','El servidor está en mantenimiento.\nGracias por tu paciencia.','IDIOMA','Cerrar'},
+            pt={'SERVIDOR EM MANUTENÇÃO','Voltaremos em breve.','O servidor está em manutenção.\nObrigado pela sua paciência.','IDIOMA','Fechar'},
+            ru={'ТЕХНИЧЕСКОЕ ОБСЛУЖИВАНИЕ','Скоро вернёмся.','На сервере проводятся технические работы.\nСпасибо за терпение.','ЯЗЫК ИНТЕРФЕЙСА','Закрыть'},
+            en={'SERVER MAINTENANCE',"We'll be back soon.",'The server is currently under maintenance.\nThank you for your patience.','DISPLAY LANGUAGE','Close'},
+        }
+        for _,code in ipairs({'es','pt','ru','en','ru'}) do
+            find(notice,'Language_'..code).Activated:Fire();w.step(15)
+            assert(notice:GetAttribute('Language')==code)
+            for i,name in ipairs({'Status','Title','Message','LanguageLabel','Dismiss'}) do
+                assert(find(notice,name).Text==expected[code][i],code..' translation: '..name)
+            end
+            local selected=0
+            for _,key in ipairs({'en','es','pt','ru'}) do
+                local button=find(notice,'Language_'..key)
+                assert(button:GetAttribute('Selected')==(key==code))
+                assert(find(button,'SelectedMark').Visible==(key==code))
+                if button:GetAttribute('Selected') then selected+=1 end
+            end
+            assert(selected==1 and #w.requests==0 and not w.pg:FindFirstChild('HzReyznInterface'))
+        end
+        w.run(source.maintenance);w.step(30)
+        assert(not notice.Parent and find(w.pg,'HzReyznMaintenance'):GetAttribute('Language')=='en')
+        find(w.pg,'Dismiss').Activated:Fire();w.step(30)
+        assert(not w.pg:FindFirstChild('HzReyznMaintenance') and #w.requests==0)
+    end)
+    test('Maintenance languages fit portrait and landscape screens and release resize callbacks',function()
+        local w=world();w.run(source.maintenance);w.step(30)
+        local notice=find(w.pg,'HzReyznMaintenance');local viewport=find(notice,'MaintenanceViewport')
+        for _,size in ipairs({{360,780},{780,360},{320,568}}) do
+            viewport.AbsoluteSize=w.env.Vector2.new(size[1],size[2]);w.step(1)
+            local layout=find(notice,'CardLayout');local scale=find(layout,'FitScale').Scale
+            assert(layout.Size.X.Offset*scale<=size[1]-24+.001 and layout.Size.Y.Offset*scale<=size[2]-24+.001)
+            for _,code in ipairs({'en','es','pt','ru'}) do
+                local button=find(notice,'Language_'..code)
+                assert(button.Position.X.Offset>=28 and button.Position.X.Offset+button.Size.X.Offset<=layout.Size.X.Offset-28+.001)
+                assert(button.Position.Y.Offset+button.Size.Y.Offset<find(notice,'Dismiss').Position.Y.Offset)
+            end
+            local english=find(notice,'Language_en');local russian=find(notice,'Language_ru')
+            assert((russian.Position.Y.Offset>english.Position.Y.Offset)==(size[1]<482))
+        end
+        local resized=viewport:GetPropertyChangedSignal('AbsoluteSize')
+        assert(resized:Count()==1)
+        notice:Destroy();w.step(30);assert(resized:Count()==0)
+        assert(#w.warnings==0 and #w.requests==0)
     end)
     test('Maintenance retires an existing Hub and intro, and stays single on re-execution',function()
         local w=world();w.character()

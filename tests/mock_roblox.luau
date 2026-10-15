@@ -91,7 +91,7 @@ local function newWorld()
     mt.__index=function(t,k)
         if methods[k] then return methods[k] end
         if events[k] then if not t._signals[k] then t._signals[k]=signal()end;return t._signals[k]end
-        if k=="AbsoluteSize" then return vec.new(760,450)end
+        if k=="AbsoluteSize" then return t._props.AbsoluteSize or vec.new(760,450)end
         if k=="AbsolutePosition" then return vec.new(20,20)end
         if k=="AbsoluteContentSize" then return vec.new(510,600)end
         if k=="AssemblyRootPart" then return t end

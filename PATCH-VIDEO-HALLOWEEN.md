@@ -2,9 +2,13 @@
 
 ## Estado actual: mantenimiento
 
-Por petición del propietario, `HzReyzn Hub.lua` tiene `HZ_MAINTENANCE = true`. Al ejecutarse, retira una instancia anterior del hub o de su introducción, muestra únicamente «El script está en mantenimiento. Regresará pronto.» y termina antes de descargar recursos o iniciar módulos. Cerrar el aviso no abre el hub. La interfaz y la introducción quedan conservadas en el código para reabrirlas cuando el propietario lo indique; no hay reapertura programada.
+Por petición del propietario, `HzReyzn Hub.lua` tiene `HZ_MAINTENANCE = true`. Al ejecutarse, retira una instancia anterior del hub o de su introducción y muestra únicamente el aviso de mantenimiento. Cada ejecución comienza en inglés: «SERVER MAINTENANCE», «We'll be back soon.» y «The server is currently under maintenance. Thank you for your patience.». El selector permite elegir English, Español, Português o Русский y actualiza de inmediato el estado, título, mensaje, etiqueta de idioma y botón de cierre. Los nombres de los idiomas conservan su forma nativa para poder identificarlos; la selección no se guarda entre ejecuciones.
 
-Dos pruebas adicionales verifican que el modo publicado no haga descargas ni abra el hub, que cerrar el aviso no reactive nada, que una introducción previa se cancele y que repetir la ejecución no duplique el aviso. Las demás pruebas ejercitan por separado el código conservado con el indicador desactivado solamente en el arnés.
+El aviso usa una tarjeta oscura, monograma HZ, borde con degradado ámbar, brillo interior, halo tenue y entrada/salida suaves. Las traducciones se incluyen en el script; no requieren servicios de traducción ni descargas de imágenes. Los controles nativos se desvanecen juntos sin crear una textura `CanvasGroup`. En pantallas estrechas, el selector cambia de cuatro columnas a dos filas y la tarjeta se ajusta a la altura disponible. Al cerrar o reemplazar el aviso se cancelan sus animaciones y conexiones.
+
+El script termina antes de descargar recursos o iniciar módulos. Cerrar el aviso no abre el hub. La interfaz y la introducción quedan conservadas en el código para reabrirlas cuando el propietario lo indique; no hay reapertura programada.
+
+Cuatro pruebas de mantenimiento verifican la ausencia de descargas y de inicio del hub, la traducción de todos los textos, la selección única y el inglés predeterminado, la adaptación a pantallas verticales/horizontales, el cierre, la cancelación de una introducción previa y la reejecución sin duplicados. Las diez pruebas anteriores ejercitan por separado el código conservado con el indicador desactivado solamente en el arnés. Son comprobaciones de comportamiento y geometría en un entorno simulado; la apariencia final se comprueba en Roblox.
 
 ## Cambios conservados para la reapertura
 
