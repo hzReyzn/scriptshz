@@ -6,7 +6,8 @@ from pathlib import Path
 import subprocess, sys
 root=Path(__file__).resolve().parents[1]
 sources={'hub':'HzReyzn Hub.lua','flight':'HzReyzn-Flight.lua',
-         'loader':'HzReyzn_Halloween.client.lua','nofall':'runtime/NoFallDamage.luau'}
+         'loader':'HzReyzn_Halloween.client.lua','nofall':'runtime/NoFallDamage.luau',
+         'maintenance':'HzReyzn Hub.lua'}
 shared=(root/'runtime/NoFallDamage.luau').read_text().strip()
 for filename in ['HzReyzn Hub.lua','HzReyzn-Flight.lua']:
     assert (root/filename).read_text().count(shared)==1, 'Shared controller copies drifted: '+filename
@@ -16,6 +17,10 @@ for filename in ['HzReyzn Hub.lua']:
 parts=[]
 for name,path in sources.items():
     contents=(root/path).read_text()
+    if name=='hub':
+        # Exercise the preserved Hub separately from the shipped maintenance gate.
+        assert contents.count('local HZ_MAINTENANCE = true')==1
+        contents=contents.replace('local HZ_MAINTENANCE = true','local HZ_MAINTENANCE = false',1)
     assert ']====]' not in contents
     parts.append(f'{name}=[====[{contents}]====]')
 generated=root/'tests/_generated_smoke.luau'

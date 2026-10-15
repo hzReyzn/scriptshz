@@ -1,5 +1,13 @@
 # Halloween: video y nueva identidad visual
 
+## Estado actual: mantenimiento
+
+Por petición del propietario, `HzReyzn Hub.lua` tiene `HZ_MAINTENANCE = true`. Al ejecutarse, retira una instancia anterior del hub o de su introducción, muestra únicamente «El script está en mantenimiento. Regresará pronto.» y termina antes de descargar recursos o iniciar módulos. Cerrar el aviso no abre el hub. La interfaz y la introducción quedan conservadas en el código para reabrirlas cuando el propietario lo indique; no hay reapertura programada.
+
+Dos pruebas adicionales verifican que el modo publicado no haga descargas ni abra el hub, que cerrar el aviso no reactive nada, que una introducción previa se cancele y que repetir la ejecución no duplique el aviso. Las demás pruebas ejercitan por separado el código conservado con el indicador desactivado solamente en el arnés.
+
+## Cambios conservados para la reapertura
+
 Esta actualización sustituye el loader anterior por el video proporcionado por el usuario. No modifica las funciones de vuelo, daño por caída, movimiento ni los scripts externos; su revisión queda para el siguiente encargo.
 
 ## Recursos

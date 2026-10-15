@@ -4,6 +4,34 @@ local function runTests(source)
     local function test(name,fn)fn();passed+=1;print('PASS '..name)end
     local function near(a,b)return math.abs(a-b)<.001 end
     local function find(parent,name)return assert(parent:FindFirstChild(name,true),name)end
+    test('Maintenance shows only a dismissible notice with no downloads or modules',function()
+        local w=world();w.character()
+        assert(w.run(source.maintenance)=='maintenance');w.step(90)
+        local notice=find(w.pg,'HzReyznMaintenance')
+        assert(find(notice,'Message').Text=='El script está en mantenimiento.\nRegresará pronto.')
+        assert(not w.pg:FindFirstChild('HzReyznInterface') and not w.pg:FindFirstChild('HzReyznHalloweenLoading'))
+        assert(not w.pg:FindFirstChild('HzReyzn_NoFallDamage_v4') and not w.pg:FindFirstChild('HZFlightStandalone'))
+        assert(#w.requests==0 and #w.warnings==0)
+        find(notice,'Dismiss').Activated:Fire();w.step(1800)
+        assert(not notice.Parent and not w.pg:FindFirstChild('HzReyznInterface') and #w.requests==0)
+        assert(w.services.RunService.Heartbeat:Count()==0 and w.services.RunService.RenderStepped:Count()==0)
+    end)
+    test('Maintenance retires an existing Hub and intro, and stays single on re-execution',function()
+        local w=world();w.character()
+        w.http['https://raw.githubusercontent.com/hzReyzn/scriptshz/main/HzReyzn_Halloween.client.lua']=source.loader
+        w.run(source.hub);w.step(90)
+        local hub=find(w.pg,'HzReyznInterface');local movie=find(w.pg,'HzReyznHalloweenLoading')
+        local requests=#w.requests
+        w.run(source.maintenance);w.step(30)
+        local notice=find(w.pg,'HzReyznMaintenance')
+        assert(not hub.Parent and not movie.Parent and #w.requests==requests)
+        w.run(source.maintenance);w.step(30)
+        assert(not notice.Parent and find(w.pg,'HzReyznMaintenance'))
+        local count=0
+        for _,o in ipairs(w.pg:GetChildren()) do if o.Name=='HzReyznMaintenance' then count+=1 end end
+        assert(count==1 and #w.requests==requests)
+        assert(w.services.RunService.Heartbeat:Count()==0 and w.services.RunService.RenderStepped:Count()==0)
+    end)
     test('NoFall leases, respawn, direction and competing flight',function()
         local w=world();local char,h,r=w.character()
         local factory=w.run('local player=game:GetService("Players").LocalPlayer\nlocal playerGui=player:WaitForChild("PlayerGui")\nlocal RunService=game:GetService("RunService")\n'..source.nofall..'\nreturn acquireNoFall')

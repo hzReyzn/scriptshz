@@ -1,6 +1,62 @@
 -- HzReyzn Hub
 -- Creado x Lord SIX seven Rey del Gore carlitos omg
 
+-- Keep enabled until the owner explicitly requests reopening the Hub.
+local HZ_MAINTENANCE = true
+if HZ_MAINTENANCE then
+    local playerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    for _, name in ipairs({"HzReyznInterface", "HzReyznHalloweenLoading", "HzReyznMaintenance", "HZAntiflingTest", "HZWaterWalkTest"}) do
+        local previous = playerGui:FindFirstChild(name)
+        if previous then previous:Destroy() end
+    end
+    local function make(class, parent, properties)
+        local object = Instance.new(class)
+        for key, value in pairs(properties) do object[key] = value end
+        object.Parent = parent
+        return object
+    end
+    local screen = make("ScreenGui", playerGui, {
+        Name = "HzReyznMaintenance", ResetOnSpawn = false, IgnoreGuiInset = true,
+        DisplayOrder = 100001, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    })
+    make("Frame", screen, {
+        Name = "Shade", Size = UDim2.fromScale(1, 1), BorderSizePixel = 0,
+        BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = .45,
+    })
+    local panel = make("Frame", screen, {
+        Name = "Notice", AnchorPoint = Vector2.new(.5, .5), Position = UDim2.fromScale(.5, .5),
+        Size = UDim2.new(.88, 0, 0, 240), BackgroundColor3 = Color3.fromRGB(18, 15, 20),
+        BorderSizePixel = 0, ZIndex = 2,
+    })
+    make("UISizeConstraint", panel, {MaxSize = Vector2.new(440, 240)})
+    make("UICorner", panel, {CornerRadius = UDim.new(0, 18)})
+    local edge = make("UIStroke", panel, {Color = Color3.new(1, 1, 1), Thickness = 1.5, Transparency = .2})
+    make("UIGradient", edge, {
+        Rotation = 25, Color = ColorSequence.new(Color3.fromRGB(255, 103, 32), Color3.fromRGB(255, 193, 87)),
+    })
+    local function text(name, message, y, height, size, color)
+        return make("TextLabel", panel, {
+            Name = name, Text = message, Position = UDim2.new(0, 24, 0, y),
+            Size = UDim2.new(1, -48, 0, height), BackgroundTransparency = 1,
+            Font = Enum.Font.GothamMedium, TextSize = size, TextColor3 = color,
+            TextWrapped = true, ZIndex = 3,
+        })
+    end
+    text("Brand", "HzReyzn Hub", 22, 30, 22, Color3.fromRGB(255, 247, 238))
+    text("Status", "EN MANTENIMIENTO", 62, 22, 13, Color3.fromRGB(255, 151, 65))
+    text("Message", "El script está en mantenimiento.\nRegresará pronto.", 96, 60, 17, Color3.fromRGB(218, 214, 225))
+    local close = make("TextButton", panel, {
+        Name = "Dismiss", Text = "Cerrar", AnchorPoint = Vector2.new(.5, 0),
+        Position = UDim2.new(.5, 0, 0, 183), Size = UDim2.new(.5, 0, 0, 36),
+        BackgroundColor3 = Color3.fromRGB(66, 35, 25), TextColor3 = Color3.fromRGB(255, 191, 137),
+        BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 15, ZIndex = 3,
+    })
+    make("UICorner", close, {CornerRadius = UDim.new(0, 10)})
+    close.Activated:Connect(function() screen:Destroy() end)
+    -- Closing the notice only dismisses it; no loader, Hub or modules start.
+    return "maintenance"
+end
+
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
