@@ -149,9 +149,10 @@ local function newWorld()
     function methods:ChangeState(s)local old=self.State;self.State=s;self.StateChanged:Fire(old,s)end
     function methods:GetState()return self.State end
     function methods:GetConnectedParts()return {}end
-    function methods:Play()self.IsPlaying=true;if self.ClassName=='VideoFrame' then self.Playing=true end end
-    function methods:Pause()self.Playing=false end
-    function methods:Stop()self.IsPlaying=false end
+    function methods:Play()self.IsPlaying=true;self.Playing=true end
+    function methods:Pause()self.IsPlaying=false;self.Playing=false end
+    function methods:Resume()self.IsPlaying=true;self.Playing=true end
+    function methods:Stop()self.IsPlaying=false;self.Playing=false;self.TimePosition=0 end
     function methods:Emit()end
     function methods:Clear()end
     function methods:LoadAnimation()local track=env.Instance.new('AnimationTrack');track.Length=1;return track end
@@ -218,6 +219,10 @@ local function newWorld()
                     and not rejected and object.Playing and not W.stallVideo and renderable(object,true) then
                     object.TimePosition=math.min(object.TimeLength,object.TimePosition+1/60)
                     if object.TimePosition>=object.TimeLength then object.Playing=false;object.Ended:Fire(object.Video) end
+                end
+                if object.ClassName=='Sound' and object.Parent and object.Playing then
+                    object.TimePosition=math.min(object.TimeLength,object.TimePosition+1/60)
+                    if object.TimePosition>=object.TimeLength then object.Playing=false;object.IsPlaying=false;object.Ended:Fire() end
                 end
             end
             for _,key in ipairs({'PreSimulation','PostSimulation','Heartbeat','RenderStepped'})do services.RunService[key]:Fire(1/60)end

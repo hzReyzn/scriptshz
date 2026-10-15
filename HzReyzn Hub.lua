@@ -299,7 +299,7 @@ function intro.Reveal(callback)
     end)
     task.spawn(function()
         local ok, source = pcall(function()
-            return game:HttpGet("https://raw.githubusercontent.com/hzReyzn/scriptshz/main/HzReyzn_Halloween.client.lua?revision=visibility-2")
+            return game:HttpGet("https://raw.githubusercontent.com/hzReyzn/scriptshz/main/HzReyzn_Halloween.client.lua?revision=frames-3")
         end)
         if not fetching or destroyed or not gui.Parent then return end
         fetching = false
