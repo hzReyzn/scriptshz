@@ -299,7 +299,7 @@ function intro.Reveal(callback)
     end)
     task.spawn(function()
         local ok, source = pcall(function()
-            return game:HttpGet("https://raw.githubusercontent.com/hzReyzn/scriptshz/main/HzReyzn_Halloween.client.lua")
+            return game:HttpGet("https://raw.githubusercontent.com/hzReyzn/scriptshz/main/HzReyzn_Halloween.client.lua?revision=visibility-2")
         end)
         if not fetching or destroyed or not gui.Parent then return end
         fetching = false
@@ -340,8 +340,12 @@ local function themeLogo(host)
     round(art,12)
     local entry={plate=plate,edge=gradient,mark=mark,ink=ink,pumpkin=pumpkin,lobes=lobes,stem=stem,art=art}
     function entry:Update()
-        local ready=theme=="Halloween" and self.art.Image~="" and self.art.IsLoaded
-        self.art.Visible=ready;self.plate.Visible=not ready
+        -- Visibility must initiate loading, not depend on IsLoaded becoming true.
+        -- Some local-asset clients never update IsLoaded: the artwork still renders
+        -- above the native fallback, which remains behind it until confirmed ready.
+        local show=theme=="Halloween" and self.art.Image~=""
+        self.art.Visible=show
+        self.plate.Visible=not (show and self.art.IsLoaded)
     end
     connect(art:GetPropertyChangedSignal("IsLoaded"),function() entry:Update() end)
     themeMarks[#themeMarks+1]=entry
@@ -2530,11 +2534,16 @@ task.spawn(function()
     media.background=media.resolve("background")
     if destroyed then return end
     design.art.Image=media.background
+    pcall(function() game:GetService("ContentProvider"):PreloadAsync({design.art}) end)
 end)
 task.spawn(function()
     media.logo=media.resolve("logo")
     if destroyed then return end
-    for _,mark in ipairs(themeMarks) do mark.art.Image=media.logo;mark:Update() end
+    local images={}
+    for _,mark in ipairs(themeMarks) do
+        mark.art.Image=media.logo;mark:Update();images[#images+1]=mark.art
+    end
+    pcall(function() game:GetService("ContentProvider"):PreloadAsync(images) end)
 end)
 
 local minimized = false

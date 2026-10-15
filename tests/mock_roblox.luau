@@ -1,6 +1,6 @@
 -- Small deterministic client harness. It checks controller behavior, not Roblox physics/rendering.
 local function newWorld()
-    local W={time=0,tasks={},warnings={},objects={},requests={},viewport={X=1280,Y=720}}
+    local W={time=0,tasks={},warnings={},objects={},requests={},viewport={X=1280,Y=720},rejectVideoCanvas=true}
     local env=setmetatable({}, {__index=getfenv()})
     local function signal()
         local s={links={}}
@@ -111,6 +111,9 @@ local function newWorld()
         else t._props[k]=v end
         if k=='Video' and t.ClassName=='VideoFrame' then
             t._props.IsLoaded=not (W.rejectWebm and v:find('webm'))
+            if W.localStatusFalse then t._props.IsLoaded=false end
+        elseif k=='Image' and (t.ClassName=='ImageLabel' or t.ClassName=='ImageButton') then
+            t._props.IsLoaded=false
         end
         if old~=v then
             if t._signals[k] then t._signals[k]:Fire(v)end
@@ -182,16 +185,37 @@ local function newWorld()
     local scripts=env.Instance.new('PlayerScripts');scripts.Parent=player
     services.Players={LocalPlayer=player,GetPlayers=function()return {player}end,GetUserThumbnailAsync=function()return ''end}
     env.game={PlaceId=189707,JobId='test',GetService=function(_,name)if not services[name]then services[name]=env.Instance.new(name)end;return services[name]end,
-        HttpGet=function(_,url)W.requests[#W.requests+1]=url;assert(W.http[url],url);return W.http[url]end,GetObjects=function()return {}end}
+        HttpGet=function(_,url)
+            W.requests[#W.requests+1]=url
+            local body=W.http[url] or W.http[url:match('^[^?]+')]
+            assert(body,url);return body
+        end,GetObjects=function()return {}end}
     env.loadstring=function(src)local fn,err=loadstring(src);if fn then setfenv(fn,env)end;return fn,err end
     env.isfile=function()return true end;env.writefile=function()end;env.getcustomasset=function(path)return 'mock://'..path end
     W.env=env;W.services=services;W.player=player;W.pg=pg;W.http={}
+    local function renderable(object,isVideo)
+        local node=object
+        while node do
+            if node:IsA('GuiObject') and not node.Visible then return false end
+            if node.ClassName=='ScreenGui' and not node.Enabled then return false end
+            if node.ClassName=='CanvasGroup' then
+                if isVideo and W.rejectVideoCanvas then return false end
+                if node.GroupTransparency and node.GroupTransparency>=1 then return false end
+            end
+            node=node.Parent
+        end
+        return object:IsDescendantOf(pg)
+    end
     function W.run(src,...)local fn,err=env.loadstring(src);assert(fn,err);local result;W.spawn(function(...)result=fn(...)end,...);return result end
     function W.step(count)
         for _=1,(count or 1)do
             W.time+=1/60
             for _,object in ipairs(W.objects) do
-                if object.ClassName=='VideoFrame' and object.Parent and object.Video~='' and object.IsLoaded and object.Playing and not W.stallVideo then
+                if (object.ClassName=='ImageLabel' or object.ClassName=='ImageButton') and object.Image~='' and not object.IsLoaded
+                    and not W.localStatusFalse and renderable(object,false) then object.IsLoaded=true end
+                local rejected=W.rejectWebm and object.Video:find('webm')
+                if object.ClassName=='VideoFrame' and object.Parent and object.Video~='' and (object.IsLoaded or W.localStatusFalse)
+                    and not rejected and object.Playing and not W.stallVideo and renderable(object,true) then
                     object.TimePosition=math.min(object.TimeLength,object.TimePosition+1/60)
                     if object.TimePosition>=object.TimeLength then object.Playing=false;object.Ended:Fire(object.Video) end
                 end

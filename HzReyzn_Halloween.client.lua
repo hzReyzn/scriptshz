@@ -65,7 +65,7 @@ local previous=parent:FindFirstChild("HzReyznHalloweenLoading")
 if previous then previous:Destroy() end
 
 local alive, result = true, "completed"
-local screen, video
+local screen, video, canvas, curtain
 local links={}
 local function connect(signal, callback)
     local link=signal:Connect(callback);links[#links+1]=link;return link
@@ -95,18 +95,30 @@ local function smooth(value)
     local t=math.clamp(value,0,1)
     return t*t*(3-2*t)
 end
+local function fadeCurtain(target,duration)
+    local start=os.clock()
+    local initial=curtain.BackgroundTransparency
+    while isAlive() and os.clock()-start<duration do
+        curtain.BackgroundTransparency=initial+(target-initial)*smooth((os.clock()-start)/duration)
+        RunService.Heartbeat:Wait()
+    end
+    if isAlive() then curtain.BackgroundTransparency=target end
+end
 local function run()
     screen=create("ScreenGui",parent,{Name="HzReyznHalloweenLoading",ResetOnSpawn=false,
         IgnoreGuiInset=true,DisplayOrder=100000,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
     pcall(function() screen.ScreenInsets=Enum.ScreenInsets.None end)
     connect(screen.Destroying,function() cleanup(true) end)
     if owner then connect(owner.Destroying,function() cleanup(true) end) end
-    local canvas=create("CanvasGroup",screen,{Name="VideoFade",Size=UDim2.fromScale(1,1),
-        BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=0,BorderSizePixel=0,
-        GroupTransparency=1})
+    -- Keep VideoFrame out of CanvasGroup render targets. Some clients cannot
+    -- render/decode that combination even though the script has no Lua errors.
+    canvas=create("Frame",screen,{Name="VideoStage",Size=UDim2.fromScale(1,1),
+        BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=1,BorderSizePixel=0})
     video=create("VideoFrame",canvas,{Name="HalloweenVideo",AnchorPoint=Vector2.new(.5,.5),
         Position=UDim2.fromScale(.5,.5),Size=UDim2.fromScale(1,1),BackgroundTransparency=1,
-        BorderSizePixel=0,Video="",Looped=false,Volume=0,Playing=false})
+        BorderSizePixel=0,Video="",Looped=false,Volume=0,Playing=false,Visible=false})
+    curtain=create("Frame",screen,{Name="VideoCurtain",Size=UDim2.fromScale(1,1),
+        BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=1,BorderSizePixel=0,ZIndex=2})
     -- Fit the complete 16:9 artwork on phones and desktops without cropping text.
     local function resize()
         local bounds=canvas.AbsoluteSize
@@ -114,7 +126,7 @@ local function run()
         video.Size=UDim2.fromOffset(height*16/9,height)
     end
     connect(canvas:GetPropertyChangedSignal("AbsoluteSize"),resize);resize()
-    create("TextButton",canvas,{Name="InputShield",Size=UDim2.fromScale(1,1),Text="",
+    create("TextButton",screen,{Name="InputShield",Size=UDim2.fromScale(1,1),Text="",
         BackgroundTransparency=1,AutoButtonColor=false,Active=true,ZIndex=3})
 
     local ended=false
@@ -125,19 +137,22 @@ local function run()
         local uri=resolve(key)
         if not isAlive() then return end
         if uri~="" then
-            video.Video=uri;video.TimePosition=0;ended=false
-            local deadline=os.clock()+7
-            while isAlive() and not video.IsLoaded and os.clock()<deadline do task.wait(.05) end
+            fadeCurtain(0,.25)
             if not isAlive() then return end
-            if video.IsLoaded then
-                video:Play()
-                deadline=os.clock()+3
-                while isAlive() and video.TimePosition<.001 and not ended and os.clock()<deadline do task.wait(.03) end
-                if not isAlive() then return end
-                playing=video.TimePosition>=.001 or ended
-                if playing then break end
-            end
-            video:Pause();video.Video=""
+            canvas.BackgroundTransparency=0;video.Visible=true
+            video.Video=uri;video.TimePosition=0;ended=false
+            -- Start immediately and observe actual playback. IsLoaded is not a
+            -- reliable gate for every custom-asset provider.
+            video:Play()
+            task.spawn(function()
+                if isAlive() then pcall(function() game:GetService("ContentProvider"):PreloadAsync({video}) end) end
+            end)
+            local deadline=os.clock()+10
+            while isAlive() and video.TimePosition<.001 and not ended and os.clock()<deadline do task.wait(.03) end
+            if not isAlive() then return end
+            playing=video.TimePosition>=.001 or ended
+            if playing then break end
+            video:Pause();video.Video="";video.Visible=false
         end
     end
     if not playing then
@@ -164,7 +179,7 @@ local function run()
             fadeOut=math.min(fadeOut,1-smooth((now-finishStarted)/.3))
         end
         opacity=math.min(fadeIn,fadeOut)
-        canvas.GroupTransparency=1-opacity
+        curtain.BackgroundTransparency=opacity
         video.Volume=opacity -- original video's soundtrack; no second audio track
         if ended and (opacity<.002 or now-finishStarted>=.3) then break end
         if remaining<=.015 then break end
@@ -180,7 +195,7 @@ local function run()
         local start=os.clock()
         while isAlive() and os.clock()-start<.35 do
             local value=opacity*(1-smooth((os.clock()-start)/.35))
-            canvas.GroupTransparency=1-value;video.Volume=value
+            curtain.BackgroundTransparency=value;video.Volume=value
             RunService.Heartbeat:Wait()
         end
     end
@@ -188,5 +203,11 @@ end
 
 local ok,err=xpcall(run,function(message) return tostring(message) end)
 if not ok then result="unavailable";warn("[HzReyzn] Video intro: "..err) end
+if isAlive() and curtain then
+    -- The last movie frame fades into black; black then fades back into the game.
+    if video then video.Volume=0;video:Pause();video.Visible=false;video.Video="" end
+    if canvas then canvas.BackgroundTransparency=1 end
+    fadeCurtain(1,.35)
+end
 cleanup(false)
 return result
