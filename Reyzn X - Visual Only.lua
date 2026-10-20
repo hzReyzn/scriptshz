@@ -28,6 +28,12 @@ local C = {
     silver = Color3.fromRGB(184,181,201),
     muted = Color3.fromRGB(130,127,150)
 }
+local longLivedConnections = {}
+local function bindLong(signal, callback)
+    local connection = signal:Connect(callback)
+    table.insert(longLivedConnections, connection)
+    return connection
+end
 local FONT = Enum.Font.Gotham
 local FONT_BOLD = Enum.Font.GothamBold
 local function create(class, parent, props)
@@ -102,7 +108,7 @@ local function connectCamera()
     end
     refreshScale()
 end
-workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(connectCamera)
+bindLong(workspace:GetPropertyChangedSignal("CurrentCamera"),connectCamera)
 connectCamera()
 
 -- Animated outline and amethyst-colored fire. Everything is created locally.
@@ -488,7 +494,15 @@ local function enableDrag(handle,target)
     handle.InputEnded:Connect(function(input)
         if input==dragInput then held=false;dragInput=nil end
     end)
-    UserInputService.InputChanged:Connect(function(input)
+    bindLong(UserInputService.InputEnded,function(input)
+        if input==dragInput or (dragInput and
+            dragInput.UserInputType==Enum.UserInputType.MouseButton1 and
+            input.UserInputType==Enum.UserInputType.MouseButton1) then
+            held=false
+            dragInput=nil
+        end
+    end)
+    bindLong(UserInputService.InputChanged,function(input)
         if not held or not startPoint or not startPosition then return end
         if input.UserInputType~=Enum.UserInputType.MouseMovement
             and input.UserInputType~=Enum.UserInputType.Touch then return end
@@ -496,8 +510,8 @@ local function enableDrag(handle,target)
             and input~=dragInput then return end
         local delta=input.Position-startPoint
         target.Position=UDim2.new(
-            startPosition.X.Scale,startPosition.X.Offset+delta.X/(target==window and layoutScale or 1),
-            startPosition.Y.Scale,startPosition.Y.Offset+delta.Y/(target==window and layoutScale or 1))
+            startPosition.X.Scale,startPosition.X.Offset+delta.X,
+            startPosition.Y.Scale,startPosition.Y.Offset+delta.Y)
     end)
 end
 enableDrag(header,window)
@@ -539,6 +553,10 @@ end)
 screen.Destroying:Connect(function()
     if beat then beat:Disconnect() end
     if cameraChanged then cameraChanged:Disconnect() end
+    for _,connection in ipairs(longLivedConnections) do
+        connection:Disconnect()
+    end
+    table.clear(longLivedConnections)
 end)
 
 -- No other code is loaded or called. All visible feature buttons are inert demos.
